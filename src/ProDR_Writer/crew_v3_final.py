@@ -46,7 +46,7 @@ def create_critic_agent():
     return Agent(
         role="方案评审专家",
         goal="严格评审架构，输出评分和问题清单，不参与文档生成",
-        backstory="资深评审专家，只做评分和验收，不生成内容",
+        backstory="资深灾备评审专家，精通保险行业OIC合规、泰国PDPA数据保护法规，评分严格，不轻易给高分，擅长发现架构中的潜在问题",
         verbose=True,
         llm=get_llm(),
     )
@@ -288,6 +288,11 @@ class DRCrewV3Final:
             f"{infra_data}\n\n"
             "### 灾备策略\n"
             f"{strategy_data}\n\n"
+            "### Thailand OIC + PDPA 合规要求（必须满足）\n"
+            "- 泰国保险业委员会(OIC)强制：核心RTO≤4h，RPO≤1h\n"
+            "- 泰国个人数据保护法(PDPA)：灾备数据跨境传输合规\n"
+            "- 数据保留≥7年\n"
+            "- OIC强制要求异地灾备\n\n"
             "### 设计约束（必须严格遵守）\n"
             "- P0 系统：RPO=0（同步复制），RTO<30分钟，禁止使用备份恢复作为主策略\n"
             "- P1 系统：RPO≤1分钟，RTO<1小时，热备架构\n"
@@ -311,7 +316,31 @@ class DRCrewV3Final:
             '      "network_architecture": "网络架构说明",\n'
             '      "storage_architecture": "存储架构说明",\n'
             '      "compute_architecture": "计算架构说明",\n'
-            '      "failover_automation": "自动切换设计"\n'
+            '      "failover_automation": "自动切换设计",\n'
+            '      "datacenter_thailand": {\n'
+            '        "primary_location": "曼谷(描述具体位置)",\n'
+            '        "dr_location": "清迈或其他(描述位置)",\n'
+            '        "site_distance_km": "<数字>公里",\n'
+            '        "datacenter_tier": "Tier III / Tier IV"\n'
+            '      },\n'
+            '      "pdpa_compliance": {\n'
+            '        "data_localization": "是否满足PDPA数据本地化要求",\n'
+            '        "cross_border_transfer": "跨境传输合规措施",\n'
+            '        "encryption": "数据加密方案",\n'
+            '        "retention_years": 7\n'
+            '      },\n'
+            '      "oic_compliance": {\n'
+            '        "rto_compliant": "RTO是否满足OIC≤4小时要求",\n'
+            '        "rpo_compliant": "RPO是否满足OIC≤1小时要求",\n'
+            '        "annual_dr_test": "年度灾备演练计划",\n'
+            '        "dr_reporting": "OIC要求的灾备报告机制"\n'
+            '      },\n'
+            '      "vendor_recommendations": {\n'
+            '        "storage": "推荐存储方案（如Dell EMC/NetApp/HPE）",\n'
+            '        "replication": "推荐复制软件（如Veeam/Zerto/DellRecoverPoint）",\n'
+            '        "dr_platform": "推荐灾备平台（如Veeam DR, Dell PowerProtect）",\n'
+            '        "network": "推荐网络方案"\n'
+            '      }\n'
             "    }\n"
             "  }\n"
             "}\n"
@@ -352,8 +381,15 @@ class DRCrewV3Final:
                 f"{strategy_data}\n\n"
                 "### 待评审架构\n"
                 f"{arch_data}\n\n"
-                "请严格按照以下维度打分：\n"
-                "1. 技术可行性（权重20%）\n"
+                "请严格按照以下8个维度打分（每项0-100分）：\n"
+                "1. 技术可行性（权重15%）：复制技术成熟度/网络延迟评估/工具选型\n"
+                "2. 架构合理性（权重15%）：分层保护匹配BIA/OIC RTO-RPO合规性\n"
+                "3. 性能与扩展性（权重10%）：存储IOPS/带宽/扩展性\n"
+                "4. Thailand_PDPA合规（权重15%）：数据本地化/跨境加密/访问控制/7年保留\n"
+                "5. Thailand_OIC合规（权重15%）：RTO≤4h/RPO≤1h/年度演练/灾备报告\n"
+                "6. 安全与灾备安全（权重10%）：网络隔离/数据加密/身份认证/审计\n"
+                "7. 成本效益（权重10%）：预算合理性/Vendor务实性\n"
+                "8. 实施风险（权重10%）：跨境复杂度/运维能力/演练计划\n\n"
                 "2. 架构合理性（权重20%）\n"
                 "3. 性能与扩展性（权重15%）\n"
                 "4. 安全与合规（权重15%）\n"
@@ -363,12 +399,14 @@ class DRCrewV3Final:
                 '```json\n'
                 "{\n"
                 '  "score": <0-100整数>,\n'
-                '  "can_proceed": <true或false，score>=60为true>,\n'
+                '  "can_proceed": <true或false，score>=90为true>,\n'
                 '  "dimension_scores": {\n'
                 '    "技术可行性": {"score": <0-100>, "reason": "评分理由"},\n'
                 '    "架构合理性": {"score": <0-100>, "reason": "评分理由"},\n'
                 '    "性能与扩展性": {"score": <0-100>, "reason": "评分理由"},\n'
-                '    "安全与合规": {"score": <0-100>, "reason": "评分理由"},\n'
+                '    "Thailand_PDPA合规": {"score": <0-100>, "reason": "评分理由"},\n'
+                '    "Thailand_OIC合规": {"score": <0-100>, "reason": "评分理由"},\n'
+                '    "安全与灾备安全": {"score": <0-100>, "reason": "评分理由"},\n'
                 '    "成本效益": {"score": <0-100>, "reason": "评分理由"},\n'
                 '    "实施风险": {"score": <0-100>, "reason": "评分理由"}\n'
                 "  },\n"
@@ -389,8 +427,8 @@ class DRCrewV3Final:
             critic_data = self._parse_json(result)
 
             score = critic_data.get('score', 0)
-            can_proceed = critic_data.get('can_proceed', False)
-            print(f"  → 评分: {score}/100，{'✅ 通过' if can_proceed else '❌ 不通过'}")
+            can_proceed = score >= 90  # 提高标准，必须达到90分才算通过
+            print(f"  → 评分: {score}/100，{'✅ 通过(≥90)' if can_proceed else '❌ 不通过(<90)，将优化'}")
 
             if can_proceed:
                 return current_arch, critic_data, round_num

@@ -413,7 +413,7 @@ class WordDocumentWriterTool(BaseTool):
     def _insert_page_break(self, doc):
         doc.add_page_break()
 
-    def run(self, content=None, output_path: str = None) -> str:
+    def _run(self, content=None, output_path: str = None) -> str:
         import json as json_module
         try:
             if isinstance(content, str):
@@ -481,19 +481,19 @@ class WordDocumentWriterTool(BaseTool):
 
         # ── 目录（手动生成，避免 AI 重复标题 bug）──
         toc_entries = [
-            "第一章  执行摘要",
-            "第二章  项目概述",
-            "第三章  需求分析",
-            "第四章  灾备方案设计",
-            "第五章  投资估算",
-            "第六章  风险评估",
-            "第七章  附录",
+            "执行摘要",
+            "项目概述",
+            "需求分析",
+            "灾备方案设计",
+            "投资估算",
+            "风险评估",
+            "附录",
         ]
         th = doc.add_heading('目  录', level=1)
         th.alignment = WD_ALIGN_PARAGRAPH.CENTER
         th.runs[0].font.color.rgb = RGBColor(0, 51, 102)
-        for entry in toc_entries:
-            p = doc.add_paragraph(entry)
+        for i, entry in enumerate(toc_entries):
+            p = doc.add_paragraph(f"第{i+1}章  {entry}")
             p.paragraph_format.line_spacing = 1.8
             p.runs[0].font.size = Pt(11)
 

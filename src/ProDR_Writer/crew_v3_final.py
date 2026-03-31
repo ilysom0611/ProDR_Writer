@@ -477,234 +477,49 @@ class DRCrewV3Final:
         return current_arch, critic_data, round_num
 
     # ────────────────────────────────────────────────────────────────
-    # Step 6: 生成文档（直接从上游数据构建，不通过工具调用）
+    # Step 6: 生成文档（传递完整数据，文档内容由 doc_writer 负责）
     # ────────────────────────────────────────────────────────────────
     def _run_document(
         self, inputs: Dict, bia: Dict, infra: Dict,
         strategy: Dict, arch: Dict, critic: Dict
     ) -> Dict:
-        import textwrap
-        from datetime import datetime
+        import datetime as dt
+        from tools.doc_writer import WordDocumentWriterTool
 
         bia_d = bia.get('data', {})
         infra_d = infra.get('data', {})
         strategy_d = strategy.get('data', {})
         arch_d = arch.get('data', {})
         arch_full = arch_d.get('architecture', {})
-        critic_score = critic.get('score', 'N/A')
-        critic_summary = critic.get('summary', '')
 
-        # 提取 BIA 系统列表
-        business_systems = bia_d.get('business_systems', [])
-
-        # 提取差距分析
-        gap_analysis = infra_d.get('gap_analysis', [])
-        current_infra = infra_d.get('current_infrastructure', {})
-
-        # 提取分层策略
-        dr_strategy = strategy_d.get('dr_strategy', {})
-        protection_tiers = dr_strategy.get('protection_tiers', [])
-
-        # 提取架构
-        tier_defs = arch_full.get('tier_definitions', {})
-        net_arch = arch_full.get('network_architecture', '')
-        stor_arch = arch_full.get('storage_architecture', '')
-        compute_arch = arch_full.get('compute_architecture', '')
-        failover = arch_full.get('failover_automation', '')
-
-        # 准备文档内容
         project_name = inputs.get('project_name', '灾备技术方案')
         company_name = inputs.get('company_name', 'XX科技有限公司')
         industry = inputs.get('industry', '金融')
-        date_str = datetime.now().strftime('%Y年%m月%d日')
+        date_str = dt.datetime.now().strftime('%Y年%m月%d日')
 
-        # 调用文档工具直接构建
-        content = {
+        # 传递完整结构化数据给文档生成器
+        # doc_writer._build_chapters 会根据这些数据生成完整章节内容
+        doc_content = {
             'project_name': project_name,
             'company_name': company_name,
             'industry': industry,
             'date': date_str,
-            'sections': []
+            'budget_range': inputs.get('budget_range', 'N/A'),
+            'bia': bia_d,
+            'infra': infra_d,
+            'strategy': strategy_d,
+            'arch': arch_full,
+            'critic': critic,
+            'sections': []  # sections 由 _build_chapters 内部构建
         }
 
-        # ========== 章节 1: 执行摘要 ==========
-        summary_text = textwrap.dedent(f"""\
-            本灾备技术方案针对 {project_name} 进行系统性设计。
-            投标单位：{company_name}，行业：{industry}。
-
-            本方案基于业务影响分析（BIA）结果，对 {len(business_systems)} 个关键业务系统进行了分层保护设计，
-            其中 P0 系统 {len(tier_defs.get('P0', {}).get('systems', []))} 个，
-            P1 系统 {len(tier_defs.get('P1', {}).get('systems', []))} 个，
-            P2 系统 {len(tier_defs.get('P2', {}).get('systems', []))} 个，
-            P3 系统 {len(tier_defs.get('P3', {}).get('systems', []))} 个。
-
-            架构评审得分：{critic_score}/100。
-            {critic_summary}
-        """).strip()
-        content['sections'].append({
-            'title': '第一章 执行摘要',
-            'content': [{'type': 'text', 'text': summary_text}]
-        })
-
-        # ========== 章节 2: 项目概述 ==========
-        overview_text = textwrap.dedent(f"""\
-            {project_name}旨在建设一套完整的灾备体系，确保在灾难发生时业务连续性得到有效保障。
-
-            本方案覆盖以下范围：
-            一、数据中心灾备架构设计与实施
-            二、灾备策略制定与验证
-            三、灾备自动化切换机制建设
-            四、灾备运维管理体系建立
-
-            目标：
-            一、建立符合行业标准的灾备体系
-            二、实现核心业务 RTO≤4小时，RPO≤15分钟
-            三、建立自动化的灾备切换能力
-            四、通过定期演练验证灾备系统有效性
-        """).strip()
-        content['sections'].append({
-            'title': '第二章 项目概述',
-            'content': [{'type': 'text', 'text': overview_text}]
-        })
-
-        # ========== 章节 3: 需求分析 ==========
-        # BIA 部分
-        bia_text_lines = [f"根据业务影响分析，共识别 {len(business_systems)} 个关键业务系统："]
-        for sys in business_systems:
-            bia_text_lines.append(
-                f"• {sys.get('name', '')}（{sys.get('tier', '')}）"
-                f" | RTO: {sys.get('rto', '')} | RPO: {sys.get('rpo', '')}"
-                f" | 关键程度: {sys.get('criticality', '')}"
-            )
-        bia_text = '\n'.join(bia_text_lines)
-
-        # 差距分析表格
-        gap_rows = [['领域', '当前能力', '要求能力', '差距', '风险等级']]
-        for g in gap_analysis:
-            gap_rows.append([
-                g.get('area', ''),
-                g.get('current_capability', ''),
-                g.get('required_capability', ''),
-                g.get('gap', ''),
-                g.get('risk_level', '')
-            ])
-
-        content['sections'].append({
-            'title': '第三章 需求分析',
-            'content': [
-                {'type': 'heading', 'text': '3.1 业务影响分析（BIA）'},
-                {'type': 'text', 'text': bia_text},
-                {'type': 'heading', 'text': '3.2 现状评估'},
-                {'type': 'text', 'text': f"计算资源：{current_infra.get('compute', 'N/A')}\n"
-                                          f"存储资源：{current_infra.get('storage', 'N/A')}\n"
-                                          f"网络架构：{current_infra.get('network', 'N/A')}\n"
-                                          f"应用系统：{current_infra.get('application', 'N/A')}"},
-                {'type': 'heading', 'text': '3.3 差距分析'},
-                {'type': 'table', 'rows': gap_rows},
-            ]
-        })
-
-        # ========== 章节 4: 灾备方案设计 ==========
-        strategy_text = f"总体策略：{dr_strategy.get('overall_strategy', 'N/A')}\n\n"
-        for tier_info in protection_tiers:
-            tier_text = (
-                f"• {tier_info.get('tier', '')} 系统："
-                f"保护模式 {tier_info.get('protection_mode', '')}，"
-                f"复制方式 {tier_info.get('replication', '')}，"
-                f"切换方式 {tier_info.get('failover', '')}。"
-            )
-            if tier_info.get('rationale'):
-                tier_text += f" {tier_info.get('rationale', '')}"
-            strategy_text += tier_text + '\n'
-
-        # 架构表格
-        arch_rows = [['优先级', '系统数量', '恢复策略', 'RPO', 'RTO', '复制方式', '切换方式']]
-        for tier in ['P0', 'P1', 'P2', 'P3']:
-            td = tier_defs.get(tier, {})
-            arch_rows.append([
-                tier,
-                str(len(td.get('systems', []))),
-                td.get('recovery_strategy', ''),
-                td.get('rpo', ''),
-                td.get('rto', ''),
-                td.get('replication', ''),
-                td.get('failover', '')
-            ])
-
-        content['sections'].append({
-            'title': '第四章 灾备方案设计',
-            'content': [
-                {'type': 'heading', 'text': '4.1 分层保护策略'},
-                {'type': 'text', 'text': strategy_text},
-                {'type': 'heading', 'text': '4.2 架构设计'},
-                {'type': 'table', 'rows': arch_rows},
-                {'type': 'heading', 'text': '4.3 网络架构'},
-                {'type': 'text', 'text': net_arch or 'N/A'},
-                {'type': 'heading', 'text': '4.4 存储架构'},
-                {'type': 'text', 'text': stor_arch or 'N/A'},
-                {'type': 'heading', 'text': '4.5 计算架构'},
-                {'type': 'text', 'text': compute_arch or 'N/A'},
-                {'type': 'heading', 'text': '4.6 自动切换设计'},
-                {'type': 'text', 'text': failover or 'N/A'},
-            ]
-        })
-
-        # ========== 章节 5: 投资估算 ==========
-        budget_range = inputs.get('budget_range', 'N/A')
-        budget_text = textwrap.dedent(f"""\
-            本项目预算范围：{budget_range}。
-
-            投资估算说明：
-            一、P0 系统（占比约40%）：包括双活存储、小型机集群、专用网络等
-            二、P1 系统（占比约30%）：包括热备存储、同步复制许可、虚拟化资源等
-            三、P2 系统（占比约20%）：包括温备存储、异步复制、平台软件等
-            四、P3 系统（占比约10%）：包括备份软件、介质、恢复工具等
-            五、项目管理与实施费用：约占总预算的10-15%
-
-            具体分项报价待详细设计后提供。
-        """).strip()
-        content['sections'].append({
-            'title': '第五章 投资估算',
-            'content': [{'type': 'text', 'text': budget_text}]
-        })
-
-        # ========== 章节 6: 风险评估 ==========
-        issues = critic.get('issues', [])
-        risk_rows = [['严重程度', '问题描述', '修复建议']]
-        for issue in issues:
-            risk_rows.append([
-                issue.get('severity', ''),
-                issue.get('description', ''),
-                issue.get('suggestion', '')
-            ])
-
-        content['sections'].append({
-            'title': '第六章 风险评估',
-            'content': [
-                {'type': 'text', 'text': f"架构评审共发现问题 {len(issues)} 项，具体如下："},
-                {'type': 'table', 'rows': risk_rows},
-            ]
-        })
-
-        # ========== 章节 7: 附录 ==========
-        appendix_text = (
-            "一、投标人营业执照及相关资质证书\n"
-            "二、同类项目成功案例清单\n"
-            "三、技术团队资质证明\n"
-            "四、售后服务承诺书\n"
-            "五、保修期服务说明"
-        )
-        content['sections'].append({
-            'title': '第七章 附录',
-            'content': [{'type': 'text', 'text': appendix_text}]
-        })
-
-        # 调用文档工具生成文件
         os.makedirs('outputs', exist_ok=True)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
         output_path = f"outputs/{project_name}_{timestamp}.docx"
+
         try:
-            self.doc_tool.run(content=content, output_path=output_path)
+            doc_tool = WordDocumentWriterTool()
+            doc_tool.run(content=doc_content, output_path=output_path)
             return {"status": "success", "data": {"document_path": output_path}}
         except Exception as e:
             print(f"  ⚠️ 文档生成失败: {e}")

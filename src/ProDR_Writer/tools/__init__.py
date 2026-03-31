@@ -1,3 +1,3 @@
-from .doc_writer import WordDocumentWriterTool, DisasterRecoveryDocWriterTool
+from .doc_writer import WordDocumentWriterTool
 
-__all__ = ['WordDocumentWriterTool', 'DisasterRecoveryDocWriterTool']
+__all__ = ['WordDocumentWriterTool']

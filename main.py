@@ -34,7 +34,7 @@ def get_interactive_inputs() -> dict:
     inputs["company_name"] = Prompt.ask("[bold]投标单位[/bold]",
         default="XX科技有限公司")
     inputs["industry"] = Prompt.ask("[bold]行业[/bold]",
-        choices=["金融", "医疗", "政府", "教育", "制造", "零售", "其他"],
+        choices=["金融", "医疗", "政府", "教育", "制造", "零售", "保险", "其他"],
         default="金融")
     inputs["rto_requirement"] = Prompt.ask("[bold]RTO要求[/bold]",
         default="4小时")

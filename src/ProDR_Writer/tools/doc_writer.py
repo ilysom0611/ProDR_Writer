@@ -242,36 +242,30 @@ class WordDocumentWriterTool(BaseTool):
         """同步执行方法 - BaseTool 要求"""
         return self.run(content, output_path)
 
-    def run(self, content: str = None, output_path: str = None) -> str:
+    def run(self, content=None, output_path: str = None) -> str:
         """
         生成 Word 文档
-        
+
         Args:
-            content: 文档内容（JSON 字符串、字典，或包含文档数据的字符串）
+            content: 文档内容（dict 或 JSON 字符串）
             output_path: 输出文件路径
-            
+
         Returns:
             str: JSON 格式结果字符串
         """
+        import json as json_module
         try:
-            # 如果 content 是任务描述文本（不是 JSON），从中提取结构化数据
+            # 如果 content 是字符串，尝试解析为 JSON
             if isinstance(content, str):
-                import json as json_module
                 try:
                     content = json_module.loads(content)
                 except (json_module.JSONDecodeError, TypeError):
-                    # content 是普通文本任务描述，尝试解析关键字段
-                    # 从文本中提取项目信息
-                    parsed = self._parse_task_description(content)
-                    content = parsed
+                    # 解析失败，使用空字典
+                    content = {}
 
-            # content 可能是 None
-            if not content:
+            # content 可能是 None 或其他类型
+            if not isinstance(content, dict) or content is None:
                 content = {}
-
-            # 如果 content 仍然不是 dict（解析失败），使用默认值
-            if not isinstance(content, dict):
-                content = {'project_name': '灾备技术方案', 'sections': []}
 
             # 默认输出路径
             if not output_path:

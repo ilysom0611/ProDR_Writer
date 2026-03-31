@@ -1,0 +1,454 @@
+# 灾备技术方案 Tasks 配置 v2.0
+# 强制JSON输入输出，去除自由文本
+# 每个Task必须遵循：输入Schema → 验证 → 处理 → 输出Schema
+
+# ============ 1. 业务影响分析 ============
+business_impact_analysis:
+  description: >
+    进行业务影响分析（BIA），将结果输出为结构化JSON。
+
+    【输入格式】（必须严格遵循）
+    {
+      "project_info": {
+        "project_name": string,
+        "industry": string,
+        "rto_requirement": string,  # 例如 "4小时"
+        "rpo_requirement": string     # 例如 "15分钟"
+      },
+      "raw_business_input": string  # 用户提供的原始业务描述
+    }
+
+    【处理步骤】
+    1. 解析用户输入，提取关键业务系统
+    2. 为每个业务系统计算：
+       - rto_minutes: RTO要求（分钟）
+       - rpo_minutes: RPO要求（分钟）
+       - criticality: P0/P1/P2/P3
+       - hourly_loss: 每小时中断损失（万元）
+    3. 生成业务系统列表
+
+    【输出格式】（必须严格遵循，拒绝纯文本）
+    {
+      "status": "success",
+      "data": {
+        "business_systems": [
+          {
+            "name": string,
+            "description": string,
+            "rto_minutes": integer,
+            "rpo_minutes": integer,
+            "criticality": "P0|P1|P2|P3",
+            "hourly_loss": number,
+            "data_volume_tb": number,
+            "peak_concurrent_users": integer
+          }
+        ],
+        "summary": {
+          "total_systems": integer,
+          "p0_critical_count": integer,
+          "weighted_avg_rto": number,
+          "weighted_avg_rpo": number,
+          "max_acceptable_loss_yi": number
+        }
+      }
+    }
+
+  expected_output: >
+    结构化JSON，包含business_systems数组和summary统计
+
+  agent: requirement_analyst
+  input_schema: project_info + raw_business_input
+  output_schema: business_systems
+
+# ============ 2. 现状评估 ============
+current_assessment:
+  description: >
+    进行现状调研和评估，输出结构化JSON。
+
+    【输入格式】
+    {
+      "project_info": { ... },
+      "business_systems": [ ... ],  # 来自Task1
+      "raw_infrastructure_input": string,  # 用户描述的当前基础设施
+      "raw_dr_measures_input": string      # 用户描述的现有灾备措施
+    }
+
+    【处理步骤】
+    1. 解析基础设施信息，提取服务器、存储、数据库等
+    2. 评估现有灾备能力
+    3. 进行差距分析（Gap Analysis）
+
+    【输出格式】
+    {
+      "status": "success",
+      "data": {
+        "infrastructure": {
+          "servers": [...],
+          "storage": {...},
+          "database": [...],
+          "network": {...}
+        },
+        "existing_dr": {
+          "backup_mode": string,
+          "backup_frequency": string,
+          "has_remote_replication": boolean,
+          "has_auto_switch": boolean,
+          "has_dr_site": boolean
+        },
+        "gap_analysis": {
+          "current_state": {
+            "current_rto_minutes": integer,
+            "current_rpo_minutes": integer
+          },
+          "target_state": {
+            "target_rto_minutes": integer,
+            "target_rpo_minutes": integer
+          },
+          "gaps": [
+            {
+              "category": string,
+              "description": string,
+              "severity": "高|中|低"
+            }
+          ],
+          "recommendations": [string]
+        }
+      }
+    }
+
+  expected_output: >
+    结构化JSON，包含infrastructure、existing_dr和gap_analysis
+
+  agent: requirement_analyst
+  input_schema: project_info + business_systems + raw_infrastructure
+  output_schema: infrastructure + gap_analysis
+
+# ============ 3. 灾备策略设计 ============
+dr_strategy_design:
+  description: >
+    基于BIA和Gap Analysis设计灾备策略，输出结构化JSON。
+
+    【输入格式】
+    {
+      "project_info": { ... },
+      "business_systems": [ ... ],
+      "gap_analysis": { ... },
+      "budget_range": string
+    }
+
+    【处理步骤】
+    1. 根据最严格的RTO/RPO要求确定策略类型
+    2. 选择复制模式（同步/异步/CDP）
+    3. 确定切换模式
+
+    【输出格式】
+    {
+      "status": "success",
+      "data": {
+        "dr_strategy": {
+          "strategy_type": "同城双活|异地灾备|3DC|云灾备|混合灾备",
+          "replication_mode": "同步复制|异步复制|强一致性异步|CDP持续数据保护",
+          "switch_mode": "手动切换|自动切换|半自动切换",
+          "rpo_guaranteed_minutes": integer,
+          "rto_guaranteed_minutes": integer,
+          "rationale": string
+        }
+      }
+    }
+
+  expected_output: >
+    结构化JSON，包含dr_strategy
+
+  agent: dr_architect
+  input_schema: project_info + business_systems + gap_analysis
+  output_schema: dr_strategy
+
+# ============ 4. 架构设计 ============
+architecture_design:
+  description: >
+    基于灾备策略设计详细架构，输出结构化JSON。
+
+    【输入格式】
+    {
+      "project_info": { ... },
+      "business_systems": [ ... ],
+      "infrastructure": { ... },
+      "dr_strategy": { ... }
+    }
+
+    【处理步骤】
+    1. 设计主站点和灾备站点
+    2. 选择技术组件（存储、数据库、复制软件）
+    3. 设计网络拓扑
+    4. 验证RTO/RPO是否满足要求
+
+    【输出格式】
+    {
+      "status": "success",
+      "data": {
+        "architecture": {
+          "primary_site": {
+            "name": string,
+            "location": string,
+            "tier_level": "T1|T2|T3|T4"
+          },
+          "dr_site": {
+            "name": string,
+            "location": string,
+            "distance_km": integer,
+            "tier_level": string
+          },
+          "components": [
+            {
+              "component_name": string,
+              "component_type": "存储|计算|网络|数据库|中间件|应用",
+              "vendor": string,
+              "model": string,
+              "quantity": integer,
+              "unit_price_wan": number,
+              "deployment_site": "生产站点|灾备站点|云端"
+            }
+          ],
+          "network_topology": string,
+          "data_flow": string
+        },
+        "validation": {
+          "rto_achieved_minutes": integer,
+          "rpo_achieved_minutes": integer,
+          "meets_requirements": boolean,
+          "validation_notes": string
+        }
+      }
+    }
+
+  expected_output: >
+    结构化JSON，包含architecture和validation
+
+  agent: dr_architect
+  input_schema: project_info + infrastructure + dr_strategy
+  output_schema: architecture
+
+# ============ 5. 风险评估 ============
+risk_assessment:
+  description: >
+    进行风险评估，输出结构化JSON。
+
+    【输入格式】
+    {
+      "project_info": { ... },
+      "architecture": { ... },
+      "dr_strategy": { ... }
+    }
+
+    【处理步骤】
+    1. 识别技术风险、运营风险、外部风险
+    2. 评估概率和影响
+    3. 制定风险应对策略
+    4. 制定应急预案
+
+    【输出格式】
+    {
+      "status": "success",
+      "data": {
+        "risks": [
+          {
+            "risk_id": "RISK-001",
+            "description": string,
+            "category": "技术风险|运营风险|外部风险",
+            "probability": "高|中|低",
+            "impact": "高|中|低",
+            "risk_level": "严重|高|中|低",
+            "mitigation": string,
+            "contingency": string
+          }
+        ],
+        "emergency_plan": {
+          "trigger_conditions": [string],
+          "notification_process": string,
+          "switch_procedure": string,
+          "rollback_procedure": string
+        },
+        "dr_test_plan": {
+          "test_frequency": string,
+          "test_scope": [string],
+          "test_procedure": string
+        }
+      }
+    }
+
+  expected_output: >
+    结构化JSON，包含risks和emergency_plan
+
+  agent: risk_consultant
+  input_schema: project_info + architecture + dr_strategy
+  output_schema: risks
+
+# ============ 6. 投资估算 ============
+investment_estimation:
+  description: >
+    进行投资估算，输出结构化JSON。
+
+    【输入格式】
+    {
+      "project_info": { ... },
+      "architecture": { ... },
+      "budget_range": string
+    }
+
+    【处理步骤】
+    1. 汇总架构中的组件成本
+    2. 计算软件许可费用
+    3. 估算实施服务费用
+    4. 计算3年运维费用
+    5. 汇总总投资
+
+    【输出格式】
+    {
+      "status": "success",
+      "data": {
+        "hardware": [
+          {
+            "item": string,
+            "vendor": string,
+            "quantity": integer,
+            "unit_price_wan": number,
+            "subtotal_wan": number
+          }
+        ],
+        "software": [
+          {
+            "item": string,
+            "vendor": string,
+            "license_type": string,
+            "quantity": integer,
+            "unit_price_wan": number,
+            "subtotal_wan": number
+          }
+        ],
+        "service": [
+          {
+            "item": string,
+            "scope": string,
+            "man_days": integer,
+            "daily_rate_wan": number,
+            "subtotal_wan": number
+          }
+        ],
+        "year1_total_wan": number,
+        "year2_ops_wan": number,
+        "year3_ops_wan": number,
+        "total_wan": number,
+        "total_yi": number,
+        "budget_comparison": {
+          "budget_range": string,
+          "is_within_budget": boolean,
+          "difference_yi": number
+        }
+      }
+    }
+
+  expected_output: >
+    结构化JSON，包含cost_breakdown和budget_comparison
+
+  agent: cost_analyst
+  input_schema: project_info + architecture
+  output_schema: cost
+
+# ============ 7. 质量审核 ============
+quality_review:
+  description: >
+    验证所有数据的完整性和一致性，输出验证结果JSON。
+
+    【输入格式】
+    {
+      "project_info": { ... },
+      "business_systems": [ ... ],
+      "gap_analysis": { ... },
+      "dr_strategy": { ... },
+      "architecture": { ... },
+      "risks": [ ... ],
+      "cost": { ... }
+    }
+
+    【处理步骤】
+    1. 验证Schema合规性
+    2. 交叉验证数据一致性
+    3. 检查业务规则
+    4. 输出验证报告
+
+    【输出格式】
+    {
+      "status": "success|error",
+      "validation_results": {
+        "schema_valid": boolean,
+        "consistency_check": {
+          "rto_valid": boolean,
+          "rpo_valid": boolean,
+          "budget_valid": boolean,
+          "risk_level_valid": boolean
+        },
+        "business_rules": [
+          {
+            "rule": string,
+            "status": "pass|fail",
+            "message": string
+          }
+        ]
+      },
+      "issues": [
+        {
+          "severity": "critical|major|minor",
+          "location": string,
+          "description": string,
+          "suggestion": string
+        }
+      ],
+      "overall_status": "approved|needs_revision|rejected"
+    }
+
+  expected_output: >
+    结构化JSON，包含validation_results和issues
+
+  agent: quality_reviewer
+  input_schema: all_previous_outputs
+  output_schema: validation_result
+
+# ============ 8. 文档生成 ============
+document_generation:
+  description: >
+    将结构化JSON转换为Word文档。这是唯一可以生成非JSON输出的Task。
+
+    【输入格式】
+    {
+      "project_info": { ... },
+      "executive_summary": { ... },
+      "bia": { ... },
+      "gap_analysis": { ... },
+      "dr_strategy": { ... },
+      "architecture": { ... },
+      "risks": [ ... ],
+      "cost": { ... }
+    }
+
+    【处理步骤】
+    1. 读取JSON数据
+    2. 填充Word模板
+    3. 生成封面、目录、章节
+    4. 保存文档
+
+    【输出格式】
+    {
+      "status": "success",
+      "data": {
+        "document_path": string,
+        "page_count": integer,
+        "chapters_generated": [string]
+      }
+    }
+
+  expected_output: >
+    JSON包含document_path，不输出纯文本
+
+  agent: document_writer
+  input_schema: complete_json_data
+  output_schema: document_metadata

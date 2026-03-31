@@ -1,0 +1,8 @@
+# 灾备技术方案生成系统依赖
+crewai>=1.12.0
+crewai-tools>=1.12.0
+python-docx>=1.2.0
+pydantic>=2.0
+typer>=0.9.0
+rich>=10.11.0
+litellm>=1.65.0

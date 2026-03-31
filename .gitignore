@@ -33,8 +33,8 @@ env/
 .venv/
 
 # Conda
-env.yml
-*.yml
+environment.yml
+!environment.yml
 
 # IDE
 .vscode/

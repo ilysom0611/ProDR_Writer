@@ -542,6 +542,23 @@ class WordDocumentWriterTool(BaseTool):
 
     def _build_chapters(self, doc: Document, c: dict):
         """构建完整章节内容（专业自然语言风格）"""
+        # 删除 TOC 中误添加的段落（这些是目录条目，不是正文内容）
+        # 保留目录页本身，删除正文中的重复 TOC 条目
+        paragraphs_to_remove = []
+        for para in doc.paragraphs:
+            txt = para.text.strip()
+            # 这些是 TOC 误添加的条目（正文标题中不含这些关键词）
+            if txt in [
+                "第1章  执行摘要", "第2章  项目概述", "第3章  需求分析",
+                "第4章  灾备方案设计", "第5章  投资估算",
+                "第6章  风险评估", "第7章  附录",
+            ]:
+                # 保留在目录页（靠前的段落），删除在正文中的
+                if doc.paragraphs.index(para) > 15:
+                    paragraphs_to_remove.append(para)
+        for para in paragraphs_to_remove:
+            p = para._element
+            p.getparent().remove(p)
         bia_data = c.get('bia', {})
         infra_data = c.get('infra', {})
         strategy_data = c.get('strategy', {})

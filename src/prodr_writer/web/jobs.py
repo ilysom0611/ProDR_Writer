@@ -42,6 +42,8 @@ class Job:
 
 
 class JobManager:
+    MAX_JOBS = 200  # evict oldest finished jobs beyond this to bound memory
+
     def __init__(self):
         self._jobs: Dict[str, Job] = {}
         self._lock = threading.Lock()
@@ -49,6 +51,13 @@ class JobManager:
     def create(self, kind: str, project_name: str) -> Job:
         job = Job(id=uuid.uuid4().hex[:12], kind=kind, project_name=project_name)
         with self._lock:
+            if len(self._jobs) >= self.MAX_JOBS:
+                finished = sorted(
+                    (j for j in self._jobs.values() if j.status != "running"),
+                    key=lambda j: j.created_at,
+                )
+                for old in finished[: len(self._jobs) - self.MAX_JOBS + 1]:
+                    del self._jobs[old.id]
             self._jobs[job.id] = job
         return job
 

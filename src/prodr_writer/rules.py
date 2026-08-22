@@ -75,7 +75,7 @@ def check_p0_strategy(arch: DRArchitecture, strategy: DRStrategy) -> List[Findin
     findings = []
     forbidden = ("backup", "restore", "备份", "恢复")
     p0 = arch.tier_definitions.get("P0")
-    if p0 and any(word in (p0.recovery_strategy or "").lower() for word in ("backup", "restore")):
+    if p0 and any(word in (p0.recovery_strategy or "").lower() for word in forbidden):
         findings.append(Finding(rule_id="P0-STRATEGY", severity="fatal",
                                 message="P0 tier uses backup/restore as its recovery strategy; "
                                         "synchronous replication is required (RPO=0)."))

@@ -4,10 +4,15 @@ doc_language: zh
 cover:
   title: "容灾备份技术方案"
   subtitle_prefix: "——"
+  client_label: "客户"
+  vendor_label: "供应商"
+  date_label: "日期"
+  profile_label: "合规基线"
   confidentiality: "保密文件 — 仅限指定评标方使用"
 
 document_control:
   heading: "文档控制"
+  initial_issue: "初始版本"
   version_table:
     - ["版本", "日期", "作者", "说明"]
   approval_table:
@@ -71,6 +76,15 @@ labels:
   duration: "参考周期"
   test_type: "演练类型"
   frequency: "频率"
+  framework: "框架"
+  layer: "层级"
+  recommendation: "选型建议"
+  aspect: "方面"
+  design: "设计说明"
+  term: "术语"
+  definition: "定义"
+  vendor_recommendations: "厂商选型建议"
+  compliance_design: "合规设计要点"
 
 severity_names:
   fatal: "致命"
@@ -91,6 +105,7 @@ sentences:
   review_pending: "本次运行未附带自动评审结果。"
   validation_passed: "全部自动化一致性校验通过。"
   validation_failed: "存在以下致命问题，须在提交前解决："
+  chart_unavailable: "【图表生成失败：{exc}】"
   background_body: >
     {client} 需要为其核心业务建立可靠的容灾能力。本文档定义业务影响背景、
     目标容灾策略与架构、合规对齐以及 {client} 与 {vendor} 之间的实施路线图，

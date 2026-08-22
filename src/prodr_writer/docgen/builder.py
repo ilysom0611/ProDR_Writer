@@ -96,12 +96,19 @@ class Builder:
             self.doc.add_paragraph(item, style="List Bullet")
 
     def labeled_table(self, caption_text: str, headers: List[str], rows: List[List[str]]) -> None:
-        """Captioned table (caption above, per international convention)."""
-        self.tab_no += 1
-        cap = self.doc.add_paragraph()
-        cap.paragraph_format.keep_with_next = True
-        cap.add_run(f"Table {self.tab_no}: ").bold = True
-        cap.add_run(caption_text)
+        """Captioned table (caption above, per international convention).
+
+        An empty caption emits no numbered caption paragraph.
+        """
+        if caption_text:
+            self.tab_no += 1
+            cap = self.doc.add_paragraph()
+            cap.paragraph_format.keep_with_next = True
+            cap.add_run(f"Table {self.tab_no}: ").bold = True
+            cap.add_run(caption_text)
+        table = self.doc.add_table(rows=1, cols=len(headers))
+        table.style = "Light Grid Accent 1"
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
         table = self.doc.add_table(rows=1, cols=len(headers))
         table.style = "Light Grid Accent 1"
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -176,10 +183,10 @@ def build_document(run: dict, run_dir: Path) -> Path:
     )
     subtitle_run.font.size = Pt(15)
     meta_lines = [
-        f"Client: {inputs.get('client_name', '-')}",
-        f"Vendor: {inputs.get('vendor_name', '-')}",
-        f"Date: {time.strftime('%Y-%m-%d')}",
-        f"Profile: {profile_title}",
+        f"{res['cover']['client_label']}: {inputs.get('client_name', '-')}",
+        f"{res['cover']['vendor_label']}: {inputs.get('vendor_name', '-')}",
+        f"{res['cover']['date_label']}: {time.strftime('%Y-%m-%d')}",
+        f"{res['cover']['profile_label']}: {profile_title}",
     ]
     for line in meta_lines:
         p = doc.add_paragraph()
@@ -198,7 +205,7 @@ def build_document(run: dict, run_dir: Path) -> Path:
     b.heading(dc["heading"], level=1)
     b.labeled_table("", dc["version_table"][0],
                     [["1.0", time.strftime("%Y-%m-%d"), inputs.get("vendor_name", "-"),
-                      "Initial issue"]])
+                      dc.get("initial_issue", "Initial issue")]])
     approval_rows = [[role, "", "", ""] for role in dc["roles"]]
     b.labeled_table("", dc["approval_table"][0], approval_rows)
     b.heading(dc["notice_heading"], level=2)
@@ -258,10 +265,10 @@ def build_document(run: dict, run_dir: Path) -> Path:
     )
     try:
         fig1 = run_dir / "chart_tier_distribution.png"
-        tier_distribution_chart(_dict_to_bia(bia), fig1, res["charts"])
+        tier_distribution_chart(_dict_to_bia(bia), fig1, res["charts"], language)
         b.figure(fig1, res["charts"]["chart_tier_title"])
     except Exception as exc:  # noqa: BLE001 — loud but non-fatal
-        b.para(f"[Chart unavailable: {exc}]")
+        b.para(res["sentences"]["chart_unavailable"].format(exc=exc))
 
     # -- 4. Current State -----------------------------------------------------
     b.heading(chapters["current_state"], 1)
@@ -316,18 +323,18 @@ def build_document(run: dict, run_dir: Path) -> Path:
             b.para(arch[key])
     vendors = arch.get("vendor_recommendations", {}) or {}
     if vendors:
-        b.labeled_table("Vendor recommendations",
-                        ["Layer", "Recommendation"],
+        b.labeled_table(labels["vendor_recommendations"],
+                        [labels["layer"], labels["recommendation"]],
                         [[k.replace("_", " ").capitalize(), v] for k, v in vendors.items() if v])
     try:
         fig2 = run_dir / "chart_topology.png"
-        topology_diagram(_dict_to_arch(arch), fig2, res["charts"])
+        topology_diagram(_dict_to_arch(arch), fig2, res["charts"], language)
         b.figure(fig2, res["charts"]["chart_replication_link"])
         fig3 = run_dir / "chart_rto_rpo.png"
-        rto_rpo_chart(_dict_to_arch(arch), fig3, res["charts"])
+        rto_rpo_chart(_dict_to_arch(arch), fig3, res["charts"], language)
         b.figure(fig3, res["charts"]["chart_rto_title"])
     except Exception as exc:  # noqa: BLE001 — loud but non-fatal
-        b.para(f"[Chart unavailable: {exc}]")
+        b.para(res["sentences"]["chart_unavailable"].format(exc=exc))
 
     # -- 7. Compliance --------------------------------------------------------
     b.heading(chapters["compliance"], 1)
@@ -338,11 +345,11 @@ def build_document(run: dict, run_dir: Path) -> Path:
             comp_rows.append([framework.get("name", framework.get("id", "")), req, ""])
     if comp_rows:
         b.labeled_table(labels["requirement"],
-                        ["Framework", labels["requirement"], labels["status"]], comp_rows)
+                        [labels["framework"], labels["requirement"], labels["status"]], comp_rows)
     compliance_design = arch.get("compliance_design", {}) or {}
     if any(compliance_design.values()):
-        b.labeled_table("Compliance design elements",
-                        ["Aspect", "Design"],
+        b.labeled_table(labels["compliance_design"],
+                        [labels["aspect"], labels["design"]],
                         [[k.replace("_", " ").capitalize(), v] for k, v in compliance_design.items() if v])
 
     # -- 8. Roadmap ------------------------------------------------------------
@@ -375,7 +382,8 @@ def build_document(run: dict, run_dir: Path) -> Path:
     # -- Appendices ----------------------------------------------------------------
     b.heading(chapters["glossary"], 1)
     b.para(res["sentences"]["glossary_note"])
-    b.labeled_table("Glossary", ["Term", "Definition"], [list(pair) for pair in res["glossary"]])
+    b.labeled_table(chapters["glossary"], [labels["term"], labels["definition"]],
+                    [list(pair) for pair in res["glossary"]])
     b.heading(chapters["references"], 1)
     b.para(res["sentences"]["references_note"])
     for ref in res["references"]:
@@ -389,8 +397,9 @@ def build_document(run: dict, run_dir: Path) -> Path:
 def _safe_name(name: str) -> str:
     import re
 
-    slug = re.sub(r'[\\/:*?"<>|]+', "-", name).strip(". ")[:80]
-    return re.sub(r"\s+", "-", slug) or "proposal"
+    slug = re.sub(r"[\\/:*?\"<>|]+", "-", name)
+    slug = re.sub(r"\s+", "-", slug)[:80].strip(". ")  # re-strip after truncation
+    return slug or "proposal"
 
 
 def _load_profile_meta(profile_name: str) -> Dict:

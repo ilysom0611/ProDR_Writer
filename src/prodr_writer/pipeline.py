@@ -39,9 +39,9 @@ PASS_SCORE = 90
 
 def slugify(name: str) -> str:
     """Filesystem-safe slug for project names on Windows and POSIX."""
-    slug = re.sub(r'[\\/:*?"<>|]+', "-", name).strip(". ")
-    slug = re.sub(r"\s+", "-", slug)
-    return slug[:80] or "project"
+    slug = re.sub(r'[\\/:*?"<>|]+', "-", name)
+    slug = re.sub(r"\s+", "-", slug)[:80].strip(". ")  # re-strip after truncation
+    return slug or "project"
 
 
 class Pipeline:

@@ -82,10 +82,18 @@ def main(
             "profile": profile or base.profile}.items()})
     else:
         inputs = ProjectInput(project_name=project, **inputs_kwargs)
-    summary = _generate(inputs, cfg, None)
+    try:
+        summary = _generate(inputs, cfg, None)
+    except typer.Exit:
+        raise
+    except Exception as exc:  # noqa: BLE001 — single loud failure point
+        console.print(f"[red]Generation failed:[/red] {type(exc).__name__}: {exc}")
+        raise typer.Exit(code=1)
     console.print(f"[green]Done.[/green] Document: {summary['docx']} "
                   f"(review rounds: {summary['review_rounds']}, final score: {summary['score']}, "
                   f"fatal findings: {summary['fatal_findings']}, warnings: {summary['warnings']})")
+    if summary["fatal_findings"]:
+        raise typer.Exit(code=3)
 
 
 @app.command()
@@ -152,7 +160,13 @@ def config(
                                   default=cfg.llm.base_url or "https://api.minimax.chat/v1")
     cfg.llm.api_key = Prompt.ask("API key", password=True, default=cfg.llm.api_key)
     cfg.llm.model = Prompt.ask("Model name", default=cfg.llm.model or "MiniMax-M2.5")
-    cfg.llm.temperature = float(Prompt.ask("Temperature", default=str(cfg.llm.temperature)))
+    while True:
+        raw_temp = Prompt.ask("Temperature", default=str(cfg.llm.temperature))
+        try:
+            cfg.llm.temperature = float(raw_temp)
+            break
+        except ValueError:
+            console.print("[red]Please enter a number, e.g. 0.3[/red]")
     cfg.language = Prompt.ask("Default document language (en/zh)", default=cfg.language)
     profiles = ", ".join(list_profiles())
     cfg.profile = Prompt.ask(f"Default compliance profile ({profiles})", default=cfg.profile)

@@ -4,10 +4,15 @@ doc_language: en
 cover:
   title: "Disaster Recovery Technical Proposal"
   subtitle_prefix: "for"
+  client_label: "Client"
+  vendor_label: "Vendor"
+  date_label: "Date"
+  profile_label: "Profile"
   confidentiality: "CONFIDENTIAL — For evaluation by the named recipient only"
 
 document_control:
   heading: "Document Control"
+  initial_issue: "Initial issue"
   version_table:
     - ["Version", "Date", "Author", "Description"]
   approval_table:
@@ -72,6 +77,15 @@ labels:
   duration: "Indicative Duration"
   test_type: "Test Type"
   frequency: "Frequency"
+  framework: "Framework"
+  layer: "Layer"
+  recommendation: "Recommendation"
+  aspect: "Aspect"
+  design: "Design"
+  term: "Term"
+  definition: "Definition"
+  vendor_recommendations: "Vendor recommendations"
+  compliance_design: "Compliance design elements"
 
 severity_names:
   fatal: "Fatal"
@@ -97,6 +111,7 @@ sentences:
     No automated review result is attached to this run.
   validation_passed: "All automated consistency checks passed."
   validation_failed: "The following fatal findings must be resolved before submission:"
+  chart_unavailable: "[Chart unavailable: {exc}]"
   background_body: >
     {client} requires a resilient disaster recovery capability for its critical
     business services. This document defines the business impact context, the

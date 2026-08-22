@@ -44,9 +44,10 @@ def _finish(fig, out_path: Path) -> Path:
     return out_path
 
 
-def tier_distribution_chart(bia: BIAReport, out_path: Path, labels: Dict[str, str]) -> Path:
+def tier_distribution_chart(bia: BIAReport, out_path: Path, labels: Dict[str, str],
+                            language: str = "en") -> Path:
     """Bar chart: number of business systems per importance tier."""
-    _setup_style("en")
+    _setup_style(language)
     counts = {tier: 0 for tier in ("P0", "P1", "P2", "P3")}
     for system in bia.business_systems:
         if system.tier in counts:
@@ -63,9 +64,10 @@ def tier_distribution_chart(bia: BIAReport, out_path: Path, labels: Dict[str, st
     return _finish(fig, out_path)
 
 
-def rto_rpo_chart(arch: DRArchitecture, out_path: Path, labels: Dict[str, str]) -> Path:
+def rto_rpo_chart(arch: DRArchitecture, out_path: Path, labels: Dict[str, str],
+                  language: str = "en") -> Path:
     """Log-scale grouped bar of RTO/RPO targets per tier."""
-    _setup_style("en")
+    _setup_style(language)
     from ..rules import parse_minutes
 
     tiers = sorted(set(arch.tier_definitions) & {"P0", "P1", "P2", "P3"})
@@ -89,9 +91,10 @@ def rto_rpo_chart(arch: DRArchitecture, out_path: Path, labels: Dict[str, str]) 
     return _finish(fig, out_path)
 
 
-def topology_diagram(arch: DRArchitecture, out_path: Path, labels: Dict[str, str]) -> Path:
+def topology_diagram(arch: DRArchitecture, out_path: Path, labels: Dict[str, str],
+                     language: str = "en") -> Path:
     """Simple two-site topology diagram from the architecture's site info."""
-    _setup_style("en")
+    _setup_style(language)
     fig, ax = plt.subplots(figsize=(7.5, 3.4))
     ax.axis("off")
 

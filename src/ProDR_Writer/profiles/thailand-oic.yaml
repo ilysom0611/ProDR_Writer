@@ -1,0 +1,55 @@
+name: thailand-oic
+title:
+  en: Thailand OIC & PDPA aligned disaster recovery
+  zh: 泰国 OIC 与 PDPA 合规灾备方案
+industry_hint: insurance
+region: thailand
+
+regulatory_context: |
+  - The Office of Insurance Commission (OIC) of Thailand requires insurers to
+    maintain off-site disaster recovery capability with core-system RTO <= 4 hours
+    and RPO <= 1 hour.
+  - Thailand Personal Data Protection Act (PDPA) governs cross-border transfer of
+    personal data; primary and DR data should remain in Thailand unless an
+    approved safeguard is documented.
+  - Retention of insurance records must be at least 7 years.
+  - Off-site DR (sufficient geographical separation from the primary site) is
+    mandatory; annual DR testing with evidence reported to regulators.
+
+constraints:
+  P0: { rpo_max_minutes: 0, rto_max_minutes: 30 }
+  P1: { rpo_max_minutes: 1, rto_max_minutes: 60 }
+  P2: { rpo_max_minutes: 15, rto_max_minutes: 240 }
+  P3: { rpo_max_minutes: 60, rto_max_minutes: 1440 }
+
+review_dimensions:
+  - { key: technical_feasibility, weight: 15, name: { en: Technical Feasibility, zh: 技术可行性 } }
+  - { key: architecture_quality, weight: 15, name: { en: Architecture Quality, zh: 架构合理性 } }
+  - { key: performance_scalability, weight: 10, name: { en: Performance & Scalability, zh: 性能与扩展性 } }
+  - { key: pdpa_compliance, weight: 15, name: { en: PDPA Compliance, zh: PDPA 合规 } }
+  - { key: oic_compliance, weight: 15, name: { en: OIC Compliance, zh: OIC 合规 } }
+  - { key: security, weight: 10, name: { en: Security & Resilience, zh: 安全与韧性 } }
+  - { key: cost_efficiency, weight: 10, name: { en: Cost Efficiency, zh: 成本效益 } }
+  - { key: implementation_risk, weight: 10, name: { en: Implementation Risk, zh: 实施风险 } }
+
+compliance_frameworks:
+  - id: OIC
+    name: Thailand OIC Regulations
+    requirements:
+      - Core system RTO <= 4 hours and RPO <= 1 hour
+      - Off-site DR with adequate geographical separation
+      - Annual DR drill with documented results
+      - Regulatory reporting mechanism for DR status and incidents
+  - id: PDPA
+    name: Thailand Personal Data Protection Act (PDPA)
+    requirements:
+      - Personal data localization within Thailand for production and DR copies
+      - Cross-border transfer safeguards where transfer is unavoidable
+      - Encryption of personal data at rest and in transit
+      - Access control and audit logging for DR environments
+  - id: RETENTION
+    name: Record Retention
+    requirements:
+      - Insurance records retained >= 7 years with DR copy integrity guarantees
+
+extra_guidance: ""

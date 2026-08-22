@@ -1,0 +1,171 @@
+# English document strings (international bidding conventions)
+doc_language: en
+
+cover:
+  title: "Disaster Recovery Technical Proposal"
+  subtitle_prefix: "for"
+  confidentiality: "CONFIDENTIAL — For evaluation by the named recipient only"
+
+document_control:
+  heading: "Document Control"
+  version_table:
+    - ["Version", "Date", "Author", "Description"]
+  approval_table:
+    - ["Role", "Name", "Signature", "Date"]
+  roles: ["Prepared by", "Reviewed by", "Approved by"]
+  notice_heading: "Confidentiality Notice"
+  notice: >
+    This document contains proprietary and confidential information. It is
+    provided solely for the purpose of proposal evaluation and must not be
+    reproduced or disclosed to any third party without prior written consent.
+
+toc:
+  heading: "Table of Contents"
+  note: "In Microsoft Word: right-click the field below and choose 'Update Field'."
+
+chapters:
+  executive_summary: "1. Executive Summary"
+  background: "2. Project Background & Objectives"
+  bia: "3. Business Impact Analysis"
+  current_state: "4. Current State Assessment & Gap Analysis"
+  strategy: "5. Disaster Recovery Strategy"
+  architecture: "6. Disaster Recovery Architecture"
+  compliance: "7. Compliance & Regulatory Alignment"
+  roadmap: "8. Implementation Roadmap"
+  testing: "9. Testing & Maintenance"
+  validation: "10. Automated Validation Results"
+  glossary: "Appendix A. Glossary of Terms"
+  references: "Appendix B. References & Standards"
+
+labels:
+  system_name: "Business System"
+  tier: "Tier"
+  rto: "RTO Target"
+  rpo: "RPO Target"
+  criticality: "Criticality"
+  downtime_impact: "Max Downtime Impact"
+  area: "Area"
+  current_capability: "Current Capability"
+  required_capability: "Required Capability"
+  gap: "Gap"
+  risk_level: "Risk Level"
+  protection_mode: "Protection Mode"
+  replication: "Replication"
+  failover: "Failover"
+  rationale: "Rationale"
+  recovery_strategy: "Recovery Strategy"
+  systems: "Systems"
+  description: "Description"
+  requirement: "Requirement"
+  status: "Status"
+  overall_rto: "Overall RTO target"
+  overall_rpo: "Overall RPO target"
+  recovery_priority: "Recovery priority order"
+  deployment_mode: "Deployment mode"
+  primary_site: "Primary site"
+  dr_site: "DR site"
+  rule_id: "Rule"
+  severity: "Severity"
+  message: "Finding"
+  phase: "Phase"
+  activities: "Key Activities"
+  duration: "Indicative Duration"
+  test_type: "Test Type"
+  frequency: "Frequency"
+
+severity_names:
+  fatal: "Fatal"
+  major: "Major"
+  warning: "Warning"
+  info: "Info"
+
+sentences:
+  exec_summary_intro: >
+    This proposal presents a disaster recovery (DR) solution for {project},
+    prepared by {vendor} for {client}. The design protects {system_count}
+    business systems with an overall RTO target of {overall_rto} and RPO
+    target of {overall_rpo}, using a tiered protection model aligned with
+    {profile_title}.
+  review_passed: >
+    The proposed architecture completed an independent multi-dimension review
+    in {rounds} round(s), achieving a final score of {score}/100.
+  review_not_passed: >
+    The proposed architecture was reviewed for {rounds} round(s) with a final
+    score of {score}/100, below the internal pass threshold; identified issues
+    are listed in Chapter 10 and should be resolved before submission.
+  review_pending: >
+    No automated review result is attached to this run.
+  validation_passed: "All automated consistency checks passed."
+  validation_failed: "The following fatal findings must be resolved before submission:"
+  background_body: >
+    {client} requires a resilient disaster recovery capability for its critical
+    business services. This document defines the business impact context, the
+    target DR strategy and architecture, regulatory alignment, and an
+    implementation roadmap for the engagement between {client} and {vendor}.
+    It follows internationally recognised business continuity practices.
+  bia_intro: >
+    The business impact analysis below ranks business systems into four tiers;
+    P0 denotes the most critical services requiring near-zero data loss.
+  current_state_intro: >
+    The assessment summarises the current infrastructure posture and the gaps
+    that the proposed DR solution addresses.
+  strategy_intro: >
+    The strategy maps each importance tier to a protection mode balancing
+    recovery objectives against cost.
+  architecture_intro: >
+    The architecture realises the strategy across compute, storage, network,
+    and failover automation layers.
+  compliance_intro: >
+    Alignment with the applicable frameworks is summarised below; each design
+    element traces to at least one requirement of these frameworks.
+  roadmap_intro: "The engagement is delivered in the following indicative phases:"
+  testing_intro: >
+    DR capability is verified through a recurring test programme; results are
+    recorded and reported per the applicable regulatory obligations.
+  glossary_note: "The following terms are used throughout this document."
+  references_note: "The following standards and regulations are referenced by this proposal."
+  figure_toc_hint: "Update the Table of Contents field after opening the document."
+
+charts:
+  chart_tier_xlabel: "Importance Tier"
+  chart_system_count: "Number of Business Systems"
+  chart_tier_title: "Business Systems by Importance Tier"
+  chart_minutes_log: "Minutes (log scale)"
+  chart_rto_title: "RTO / RPO Targets per Tier"
+  chart_replication_link: "Data Replication"
+  chart_deployment: "Deployment mode"
+
+tables:
+  roadmap_phases:
+    - phase: "Phase 1 — Assessment & Design"
+      duration: "4-6 weeks"
+      activities: "Detailed discovery, solution design sign-off, implementation planning"
+    - phase: "Phase 2 — Foundation Build"
+      duration: "6-8 weeks"
+      activities: "DR site readiness, replication infrastructure, network connectivity"
+    - phase: "Phase 3 — Onboarding & Protection"
+      duration: "8-12 weeks"
+      activities: "System onboarding by tier, replication validation, failover automation"
+    - phase: "Phase 4 — Test & Handover"
+      duration: "4 weeks"
+      activities: "DR drill, documentation, operations handover and training"
+
+glossary:
+  - ["BIA", "Business Impact Analysis"]
+  - ["DR", "Disaster Recovery"]
+  - ["RTO", "Recovery Time Objective — maximum acceptable time to restore a service"]
+  - ["RPO", "Recovery Point Objective — maximum acceptable data loss window"]
+  - ["PDPA", "Personal Data Protection Act"]
+  - ["OIC", "Office of Insurance Commission (Thailand)"]
+  - ["SLA", "Service Level Agreement"]
+
+references:
+  - "ISO 22301 — Security and resilience — Business continuity management systems"
+  - "ISO/IEC 27031 — ICT readiness for business continuity"
+  - "NIST SP 800-34 — Contingency Planning Guide"
+
+test_programme:
+  - { test_type: "Backup restore verification", frequency: "Monthly" }
+  - { test_type: "Application failover test (P1 sample)", frequency: "Quarterly" }
+  - { test_type: "Full DR drill incl. P0 systems", frequency: "Annually" }
+  - { test_type: "Runbook tabletop review", frequency: "Semi-annually" }

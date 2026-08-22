@@ -1,0 +1,45 @@
+name: generic-enterprise
+title:
+  en: International enterprise DR best practice (ISO 22301 / ISO 27031)
+  zh: 国际企业级灾备最佳实践（ISO 22301 / ISO 27031）
+industry_hint: general
+region: global
+
+regulatory_context: |
+  - Align the design with ISO 22301 (Business Continuity Management Systems) and
+    ISO/IEC 27031 (ICT readiness for business continuity).
+  - Reference NIST SP 800-34 for contingency planning guidance where applicable.
+  - Data protection obligations follow the client's applicable privacy regime
+    (e.g. GDPR or local equivalents); state assumptions explicitly.
+
+constraints:
+  P0: { rpo_max_minutes: 0, rto_max_minutes: 30 }
+  P1: { rpo_max_minutes: 1, rto_max_minutes: 60 }
+  P2: { rpo_max_minutes: 15, rto_max_minutes: 240 }
+  P3: { rpo_max_minutes: 60, rto_max_minutes: 1440 }
+
+review_dimensions:
+  - { key: technical_feasibility, weight: 15, name: { en: Technical Feasibility, zh: 技术可行性 } }
+  - { key: architecture_quality, weight: 15, name: { en: Architecture Quality, zh: 架构合理性 } }
+  - { key: performance_scalability, weight: 10, name: { en: Performance & Scalability, zh: 性能与扩展性 } }
+  - { key: security, weight: 15, name: { en: Security & Resilience, zh: 安全与韧性 } }
+  - { key: compliance, weight: 15, name: { en: Standards & Compliance, zh: 标准与合规 } }
+  - { key: cost_efficiency, weight: 15, name: { en: Cost Efficiency, zh: 成本效益 } }
+  - { key: implementation_risk, weight: 15, name: { en: Implementation Risk, zh: 实施风险 } }
+
+compliance_frameworks:
+  - id: ISO22301
+    name: ISO 22301 Business Continuity Management
+    requirements:
+      - Documented BIA reviewed at least annually
+      - Documented and tested DR runbooks
+      - At least one full DR exercise per year with recorded results
+      - Defined RTO/RPO per service approved by management
+  - id: ISO27031
+    name: ISO/IEC 27031 ICT Readiness
+    requirements:
+      - ICT continuity strategy derived from BIA
+      - Standby infrastructure capacity planning
+      - Crisis communication and escalation procedures
+
+extra_guidance: ""

@@ -1,0 +1,151 @@
+# 中文文档文案资源
+doc_language: zh
+
+cover:
+  title: "容灾备份技术方案"
+  subtitle_prefix: "——"
+  confidentiality: "保密文件 — 仅限指定评标方使用"
+
+document_control:
+  heading: "文档控制"
+  version_table:
+    - ["版本", "日期", "作者", "说明"]
+  approval_table:
+    - ["角色", "姓名", "签字", "日期"]
+  roles: ["编写人", "审核人", "批准人"]
+  notice_heading: "保密声明"
+  notice: >
+    本文件含有专有与机密信息，仅供投标评审使用。
+    未经书面许可，不得复制或向任何第三方披露。
+
+toc:
+  heading: "目录"
+  note: "在 Microsoft Word 中：右键点击下方域并选择“更新域”。"
+
+chapters:
+  executive_summary: "1. 执行摘要"
+  background: "2. 项目背景与目标"
+  bia: "3. 业务影响分析（BIA）"
+  current_state: "4. 现状评估与差距分析"
+  strategy: "5. 容灾策略"
+  architecture: "6. 容灾架构设计"
+  compliance: "7. 合规性与监管对齐"
+  roadmap: "8. 实施路线图"
+  testing: "9. 演练与运维保障"
+  validation: "10. 自动化校验结果"
+  glossary: "附录A. 术语表"
+  references: "附录B. 参考标准"
+
+labels:
+  system_name: "业务系统"
+  tier: "等级"
+  rto: "RTO 目标"
+  rpo: "RPO 目标"
+  criticality: "关键程度"
+  downtime_impact: "最大停机影响"
+  area: "领域"
+  current_capability: "现状能力"
+  required_capability: "要求能力"
+  gap: "差距"
+  risk_level: "风险等级"
+  protection_mode: "保护模式"
+  replication: "复制方式"
+  failover: "切换方式"
+  rationale: "说明"
+  recovery_strategy: "恢复策略"
+  systems: "系统清单"
+  description: "说明"
+  requirement: "要求"
+  status: "状态"
+  overall_rto: "整体 RTO 目标"
+  overall_rpo: "整体 RPO 目标"
+  recovery_priority: "恢复优先级顺序"
+  deployment_mode: "部署模式"
+  primary_site: "生产中心"
+  dr_site: "灾备中心"
+  rule_id: "规则"
+  severity: "严重程度"
+  message: "校验发现"
+  phase: "阶段"
+  activities: "关键活动"
+  duration: "参考周期"
+  test_type: "演练类型"
+  frequency: "频率"
+
+severity_names:
+  fatal: "致命"
+  major: "严重"
+  warning: "警告"
+  info: "提示"
+
+sentences:
+  exec_summary_intro: >
+    本方案由 {vendor} 为 {client} 的“{project}”项目编制。方案对 {system_count}
+    个业务系统实施分层容灾保护，整体 RTO 目标 {overall_rto}、RPO 目标
+    {overall_rpo}，符合《{profile_title}》的要求。
+  review_passed: >
+    方案架构经独立多维评审，共进行 {rounds} 轮，最终得分 {score}/100。
+  review_not_passed: >
+    方案架构经 {rounds} 轮评审，最终得分 {score}/100，未达到内部通过线；
+    相关问题已在第 10 章列明，建议在投标前完成整改。
+  review_pending: "本次运行未附带自动评审结果。"
+  validation_passed: "全部自动化一致性校验通过。"
+  validation_failed: "存在以下致命问题，须在提交前解决："
+  background_body: >
+    {client} 需要为其核心业务建立可靠的容灾能力。本文档定义业务影响背景、
+    目标容灾策略与架构、合规对齐以及 {client} 与 {vendor} 之间的实施路线图，
+    遵循国际公认的业务连续性管理实践。
+  bia_intro: "以下业务影响分析将业务系统划分为四个等级；P0 表示需要近乎零数据丢失的最关键服务。"
+  current_state_intro: "本节总结当前基础设施状况以及拟建容灾方案所要解决的差距。"
+  strategy_intro: "本策略将各重要性等级映射到相应的保护模式，在恢复目标与成本之间取得平衡。"
+  architecture_intro: "本章从计算、存储、网络与切换自动化各层面落实上述策略。"
+  compliance_intro: "下表总结方案与适用框架的对齐情况；每个设计要素均可追溯至至少一项框架要求。"
+  roadmap_intro: "本项目按以下参考阶段交付："
+  testing_intro: "容灾能力通过周期性演练验证，演练结果按规定记录并上报相关监管要求。"
+  glossary_note: "本文档使用以下术语。"
+  references_note: "本文档引用以下标准与法规。"
+  figure_toc_hint: "打开文档后请更新目录域。"
+
+charts:
+  chart_tier_xlabel: "重要性等级"
+  chart_system_count: "业务系统数量"
+  chart_tier_title: "各等级业务系统分布"
+  chart_minutes_log: "分钟（对数刻度）"
+  chart_rto_title: "各等级 RTO / RPO 目标"
+  chart_replication_link: "数据复制"
+  chart_deployment: "部署模式"
+
+tables:
+  roadmap_phases:
+    - phase: "第一阶段 — 评估与设计"
+      duration: "4-6 周"
+      activities: "详细调研、方案设计确认、实施计划编制"
+    - phase: "第二阶段 — 基础建设"
+      duration: "6-8 周"
+      activities: "灾备机房就绪、复制基础设施、网络链路打通"
+    - phase: "第三阶段 — 系统接入与保护"
+      duration: "8-12 周"
+      activities: "按等级接入系统、复制验证、切换自动化"
+    - phase: "第四阶段 — 演练与移交"
+      duration: "4 周"
+      activities: "容灾演练、文档交付、运维交接与培训"
+
+glossary:
+  - ["BIA", "业务影响分析"]
+  - ["DR", "容灾 / 灾难恢复"]
+  - ["RTO", "恢复时间目标 — 业务可接受的最长恢复时长"]
+  - ["RPO", "恢复点目标 — 业务可接受的最大数据丢失窗口"]
+  - ["PDPA", "个人数据保护法"]
+  - ["OIC", "泰国保险业委员会"]
+  - ["SLA", "服务级别协议"]
+
+references:
+  - "ISO 22301 — 安全与韧性 — 业务连续性管理体系"
+  - "ISO/IEC 27031 — ICT 业务连续性就绪"
+  - "NIST SP 800-34 — 应急计划指南"
+
+test_programme:
+  - { test_type: "备份恢复有效性验证", frequency: "每月" }
+  - { test_type: "应用切换测试（P1 抽样）", frequency: "每季度" }
+  - { test_type: "含 P0 系统的整体容灾演练", frequency: "每年" }
+  - { test_type: "预案桌面推演", frequency: "每半年" }

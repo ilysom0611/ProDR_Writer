@@ -1,0 +1,85 @@
+{
+  "input": {
+    "project_name": "Sample Bank DR Program",
+    "client_name": "Example Bank Asia",
+    "vendor_name": "Acme Continuity Services",
+    "industry": "banking",
+    "overall_rto": "< 4 hours",
+    "overall_rpo": "< 1 hour",
+    "budget": "USD 250k-350k",
+    "language": "en",
+    "profile": "generic-enterprise"
+  },
+  "profile": "generic-enterprise",
+  "language": "en",
+  "bia": {
+    "business_systems": [
+      {"name": "Core Banking", "tier": "P0", "rto": "<30min", "rpo": "0", "criticality": "mission critical", "max_downtime_impact": "Revenue stop"},
+      {"name": "Payments Gateway", "tier": "P0", "rto": "<30min", "rpo": "0", "criticality": "mission critical", "max_downtime_impact": "Transaction loss"},
+      {"name": "Internet Banking", "tier": "P1", "rto": "<1h", "rpo": "<1min", "criticality": "high", "max_downtime_impact": "Customer impact"},
+      {"name": "CRM", "tier": "P2", "rto": "<4h", "rpo": "<15min", "criticality": "medium", "max_downtime_impact": "Productivity"}
+    ],
+    "overall_rto": "< 4 hours",
+    "overall_rpo": "< 1 hour",
+    "recovery_priority": ["Core Banking", "Payments Gateway", "Internet Banking", "CRM"],
+    "summary": "Two mission-critical systems require near-zero data loss."
+  },
+  "current_state": {
+    "current_infrastructure": {
+      "compute": "Virtualized x86 farm, single site",
+      "storage": "SAN storage without remote replication",
+      "network": "Single datacenter uplink, no DR link",
+      "application": "Manual recovery procedures on paper"
+    },
+    "gap_analysis": [
+      {"area": "Replication", "current_capability": "None", "required_capability": "Synchronous for P0", "gap": "No replication in place", "risk_level": "high"},
+      {"area": "DR site", "current_capability": "None", "required_capability": "Off-site standby", "gap": "No secondary site", "risk_level": "high"}
+    ],
+    "summary": "Current posture does not meet any tier objective."
+  },
+  "strategy": {
+    "overall_strategy": "Tiered protection: synchronous active-active for P0, hot standby for P1, warm standby for P2, cold standby for P3.",
+    "protection_tiers": [
+      {"tier": "P0", "protection_mode": "active-active", "replication": "synchronous", "failover": "automatic", "rationale": "Zero RPO requires synchronous replication."},
+      {"tier": "P1", "protection_mode": "hot standby", "replication": "synchronous", "failover": "automatic", "rationale": "Near-zero RPO with lower cost."},
+      {"tier": "P2", "protection_mode": "warm standby", "replication": "asynchronous", "failover": "semi-automatic", "rationale": "Balanced cost."},
+      {"tier": "P3", "protection_mode": "cold standby", "replication": "asynchronous", "failover": "manual", "rationale": "Cost-first."}
+    ]
+  },
+  "architecture": {
+    "deployment_mode": "Active-active for P0 with hot standby campus",
+    "primary_site": {"name": "Primary DC", "location": "Metro A"},
+    "dr_site": {"name": "DR DC", "location": "Region B (>50 km)"},
+    "tier_definitions": {
+      "P0": {"systems": ["Core Banking", "Payments Gateway"], "recovery_strategy": "active-active", "rto": "<30min", "rpo": "0", "replication": "synchronous", "failover": "automatic", "description": "Dual-site cluster"},
+      "P1": {"systems": ["Internet Banking"], "recovery_strategy": "hot standby", "rto": "<1h", "rpo": "<1min", "replication": "synchronous", "failover": "automatic", "description": "Warm DB replicas promoted automatically"},
+      "P2": {"systems": ["CRM"], "recovery_strategy": "warm standby", "rto": "<4h", "rpo": "<15min", "replication": "asynchronous", "failover": "semi-automatic", "description": "Scheduled replication"},
+      "P3": {"systems": [], "recovery_strategy": "cold standby", "rto": "<24h", "rpo": "<1h", "replication": "asynchronous", "failover": "manual", "description": "Backup restore"}
+    },
+    "network_architecture": "Dual dark-fiber links between sites with redundant routing; DNS-based traffic steering.",
+    "storage_architecture": "Storage-based synchronous replication for P0 volumes; snapshot-based async for lower tiers.",
+    "compute_architecture": "Stretched cluster for P0; reserved capacity at DR site for P1-P3.",
+    "failover_automation": "Orchestrated runbooks with health-checked automatic promotion and manual gate for P2/P3.",
+    "site_separation": {"primary_location": "Metro A", "dr_location": "Region B", "distance_km": "60", "datacenter_tier": "Tier III"},
+    "compliance_design": {"data_localization": "All data remains in-country", "cross_border_transfer": "Not required", "encryption": "AES-256 at rest, TLS 1.3 in transit", "retention_years": 7},
+    "regulatory_alignment": {"rto_compliant": "Yes — all tiers within limits", "rpo_compliant": "Yes", "annual_dr_test": "Full drill annually", "reporting": "Quarterly DR status report to management"},
+    "vendor_recommendations": {"storage": "Dell PowerStore / NetApp AFF", "replication": "Native array replication + Veeam", "dr_platform": "VMware Site Recovery Manager", "network": "Cisco ACI multi-pod"}
+  },
+  "review": {
+    "score": 92,
+    "can_proceed": true,
+    "dimension_scores": {
+      "technical_feasibility": {"score": 95, "reason": "Proven technologies"}
+    },
+    "issues": [],
+    "summary": "Design is compliant and feasible."
+  },
+  "review_rounds": 2,
+  "validation": {
+    "findings": [
+      {"rule_id": "BUDGET", "severity": "warning", "message": "Budget alignment should be confirmed with the client."}
+    ],
+    "passed": true
+  },
+  "status": "success"
+}

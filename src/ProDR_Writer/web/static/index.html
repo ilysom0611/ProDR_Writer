@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ProDR_Writer — DR Proposal Generator</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="logo">🛡️</span>
+    <div>
+      <h1>ProDR<span>Writer</span></h1>
+      <p class="tagline">Disaster Recovery proposal generator</p>
+    </div>
+  </div>
+  <nav>
+    <button class="tab active" data-tab="generate">Generate</button>
+    <button class="tab" data-tab="config">Configuration</button>
+    <button class="tab" data-tab="history">History</button>
+  </nav>
+</header>
+
+<main>
+  <!-- ======================= GENERATE ======================= -->
+  <section id="tab-generate" class="panel active">
+    <div class="card">
+      <h2>New Proposal</h2>
+      <form id="gen-form" autocomplete="off">
+        <div class="grid">
+          <label>Project name *
+            <input name="project_name" required placeholder="e.g. Core Banking DR Program">
+          </label>
+          <label>Client
+            <input name="client_name" placeholder="e.g. Example Bank Asia">
+          </label>
+          <label>Vendor (your company)
+            <input name="vendor_name" placeholder="e.g. Acme Continuity">
+          </label>
+          <label>Industry
+            <select name="industry" id="industry-select"></select>
+          </label>
+          <label>Overall RTO target
+            <input name="overall_rto" value="< 4 hours">
+          </label>
+          <label>Overall RPO target
+            <input name="overall_rpo" value="< 1 hour">
+          </label>
+          <label>Budget range
+            <input name="budget" placeholder="e.g. USD 250k-350k">
+          </label>
+          <label>Document language
+            <select name="language">
+              <option value="en">English</option>
+              <option value="zh">中文</option>
+            </select>
+          </label>
+          <label>Compliance profile
+            <select name="profile" id="profile-select"></select>
+          </label>
+        </div>
+        <div class="actions">
+          <button type="submit" class="primary" id="btn-generate">✨ Generate document</button>
+          <button type="button" class="ghost" id="btn-demo">Try demo (no API key)</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="card hidden" id="progress-card">
+      <h2>Progress <span id="job-project" class="muted"></span></h2>
+      <ol id="stage-list" class="stages"></ol>
+      <div id="review-note" class="note hidden"></div>
+      <div id="result-box" class="result hidden">
+        <p id="result-text"></p>
+        <a id="download-link" class="primary button" download>⬇ Download .docx</a>
+      </div>
+      <div id="error-box" class="error hidden"></div>
+    </div>
+  </section>
+
+  <!-- ======================= CONFIG ======================= -->
+  <section id="tab-config" class="panel">
+    <div class="card">
+      <h2>LLM Endpoint</h2>
+      <p class="muted">Any OpenAI-compatible endpoint: MiniMax, DeepSeek, OpenAI, Azure, Ollama, vLLM…</p>
+      <form id="cfg-form" autocomplete="off">
+        <div class="grid two">
+          <label>Base URL
+            <input name="base_url" placeholder="https://api.minimax.chat/v1">
+          </label>
+          <label>Model
+            <input name="model" placeholder="e.g. MiniMax-M2.5">
+          </label>
+          <label>API key <span class="muted" id="key-hint"></span>
+            <input name="api_key" type="password" placeholder="leave empty to keep current key">
+          </label>
+          <label>Temperature
+            <input name="temperature" type="number" step="0.1" min="0" max="2" value="0.3">
+          </label>
+          <label>Default language
+            <select name="language">
+              <option value="en">English</option>
+              <option value="zh">中文</option>
+            </select>
+          </label>
+          <label>Default profile
+            <select name="profile" id="cfg-profile-select"></select>
+          </label>
+        </div>
+        <div class="actions">
+          <button type="submit" class="primary">💾 Save configuration</button>
+          <button type="button" class="ghost" id="btn-test">🔌 Test connection</button>
+        </div>
+      </form>
+      <div id="cfg-status" class="note hidden"></div>
+    </div>
+  </section>
+
+  <!-- ======================= HISTORY ======================= -->
+  <section id="tab-history" class="panel">
+    <div class="card">
+      <h2>Generated Runs</h2>
+      <table class="history" id="history-table">
+        <thead><tr><th>Run</th><th>Project</th><th>Language</th><th>Score</th><th>Fatal</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p class="muted" id="history-empty" hidden>No runs yet — generate your first proposal.</p>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast hidden"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

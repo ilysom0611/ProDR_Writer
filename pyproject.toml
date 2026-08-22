@@ -18,6 +18,8 @@ dependencies = [
     "rich>=10.11.0",
     "matplotlib>=3.5.0",
     "PyYAML>=6.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
 ]
 
 [project.optional-dependencies]
@@ -30,4 +32,4 @@ prodr-writer = "prodr_writer.cli:app"
 where = ["src"]
 
 [tool.setuptools.package-data]
-prodr_writer = ["resources/*.yaml", "profiles/*.yaml"]
+prodr_writer = ["resources/*.yaml", "profiles/*.yaml", "web/static/*"]

@@ -10,7 +10,7 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 from rich.console import Console
 
@@ -29,6 +29,8 @@ from .schemas import (
     ReviewResult,
 )
 
+NotifyFn = Optional[Callable[[dict], None]]
+
 console = Console()
 
 MAX_REVIEW_ROUNDS = 3
@@ -43,8 +45,9 @@ def slugify(name: str) -> str:
 
 
 class Pipeline:
-    def __init__(self, cfg: AppConfig):
+    def __init__(self, cfg: AppConfig, notify: NotifyFn = None):
         self.cfg = cfg
+        self.notify = notify or (lambda event: None)
         self.profile = load_profile(cfg.profile)
         self.llm = build_llm(cfg)
         self.analyst = make_agent(
@@ -122,9 +125,11 @@ class Pipeline:
     # ------------------------------------------------------------------
     def _stage(self, run_dir: Path, stage: str, label: str, number: int, fn):
         console.print(f"[bold cyan]Step {number}/6: {label}...[/bold cyan]")
+        self.notify({"type": "stage", "stage": stage, "number": number, "label": label, "status": "running"})
         result = fn()
         path = run_dir / f"{stage}.json"
         path.write_text(json.dumps(result.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8")
+        self.notify({"type": "stage", "stage": stage, "number": number, "label": label, "status": "done"})
         return result
 
     def _bia(self, inputs: ProjectInput) -> BIAReport:
@@ -161,14 +166,21 @@ class Pipeline:
             )
             console.print(f"  → score [bold]{review.score}[/bold]/100 "
                           + ("[green]passed[/green]" if review.can_proceed else "[yellow]needs optimization[/yellow]"))
+            self.notify({"type": "review", "round": round_num, "score": review.score,
+                         "passed": review.can_proceed})
             if review.can_proceed or round_num >= MAX_REVIEW_ROUNDS:
                 break
+            self.notify({"type": "stage", "stage": "optimizer", "number": 4,
+                         "label": f"optimizing architecture (round {round_num})", "status": "running"})
             optimized = run_stage(
                 self.optimizer,
                 prompts.optimizer_prompt(arch, review, self.profile, self.cfg.language),
                 "JSON optimization result", OptimizerResult, f"optimize-{round_num}",
             )
             arch = DRArchitecture.model_validate(optimized.optimized_architecture)  # fed into next round
+            self.notify({"type": "stage", "stage": "optimizer", "number": 4,
+                         "label": f"optimizing architecture (round {round_num})", "status": "done",
+                         "changes": optimized.changes})
         (run_dir / "architecture.json").write_text(json.dumps(arch.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8")
         if review:
             (run_dir / "review.json").write_text(json.dumps(review.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8")
@@ -178,6 +190,55 @@ class Pipeline:
         from .docgen.builder import build_document  # deferred: heavy imports
 
         console.print(f"[bold cyan]Step 5/6: compliance rule check done; Step 6/6: building document...[/bold cyan]")
+        self.notify({"type": "stage", "stage": "document", "number": 6, "label": "building document", "status": "running"})
         docx_path = build_document(artifacts, run_dir)
+        self.notify({"type": "stage", "stage": "document", "number": 6, "label": "building document",
+                     "status": "done", "docx": str(docx_path)})
         console.print(f"[green]Document written:[/green] {docx_path}")
         return docx_path
+
+
+# ---------------------------------------------------------------------------
+# Demo mode — full document from bundled sample data, no LLM required
+# ---------------------------------------------------------------------------
+
+def run_demo(cfg: AppConfig, notify: NotifyFn = None) -> Tuple[Path, dict]:
+    """Build a complete proposal from the bundled sample run (no API calls).
+
+    Useful for trying the tool and for smoke-testing installs.
+    """
+    import json as _json
+
+    from .schemas import ProjectInput
+
+    sample_path = Path(__file__).parent / "resources" / "sample_run.json"
+    data = _json.loads(sample_path.read_text(encoding="utf-8"))
+    inputs = ProjectInput.model_validate(data["input"])
+    inputs = inputs.model_copy(update={"language": cfg.language, "profile": cfg.profile})
+    data["input"] = inputs.model_dump()
+    data["language"] = cfg.language
+    data["profile"] = cfg.profile
+
+    profile = load_profile(cfg.profile)
+    bia = BIAReport.model_validate(data["bia"])
+    strategy = DRStrategy.model_validate(data["strategy"])
+    arch = DRArchitecture.model_validate(data["architecture"])
+
+    run_dir = Path(cfg.output_dir) / f"demo_{time.strftime('%Y%m%d_%H%M%S')}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    validation = validate_run(inputs, bia, strategy, arch, profile)
+    data["validation"] = validation.model_dump()
+
+    from .docgen.builder import build_document
+
+    if notify:
+        notify({"type": "stage", "stage": "document", "number": 6, "label": "building demo document", "status": "running"})
+    docx_path = build_document(data, run_dir)
+    if notify:
+        notify({"type": "stage", "stage": "document", "number": 6, "label": "building demo document",
+                "status": "done", "docx": str(docx_path)})
+    (run_dir / "run.json").write_text(_json.dumps({**data, "status": "demo"}, ensure_ascii=False, indent=2), encoding="utf-8")
+    return run_dir, {"docx": str(docx_path), "review_rounds": data.get("review_rounds"),
+                     "score": (data.get("review") or {}).get("score"),
+                     "fatal_findings": sum(1 for f in validation.findings if f.severity == "fatal"),
+                     "warnings": sum(1 for f in validation.findings if f.severity == "warning")}

@@ -15,10 +15,42 @@ Built for international bidding: English-first output (Chinese optional), Wester
 
 ## Installation
 
+### One-click (recommended)
+
+Linux / macOS:
+
+```bash
+./install.sh   # create .venv and install
+./start.sh     # web UI at http://0.0.0.0:8000 (PRODR_HOST/PRODR_PORT to override)
+./stop.sh      # stop the background server
+./update.sh    # git pull + reinstall (+ restart if it was running)
+```
+
+Windows (double-click or run in cmd):
+
+```bat
+install.bat
+start.bat      % web UI at http://127.0.0.1:8000 (PRODR_HOST/PRODR_PORT to override)
+stop.bat
+update.bat
+```
+
+### Manual
+
 ```bash
 pip install -e .          # from a clone
 prodr-writer --help       # or: python main.py
 ```
+
+## Web UI
+
+`prodr-writer web --host 0.0.0.0 --port 8000` (or `start.sh` / `start.bat`) opens a browser UI with three tabs:
+
+- **Generate** — fill in project parameters, watch each pipeline stage complete live, then download the finished `.docx`. A **Try demo** button builds a full sample document with no API key.
+- **Configuration** — set base URL / API key / model for any OpenAI-compatible endpoint, pick default language and profile, and test the connection without leaving the page.
+- **History** — every past run with review score, validation findings, and one-click download.
+
+## CLI quick start
 
 Requires Python 3.10+. Charts need matplotlib fonts available on the host (a CJK font is required for Chinese labels).
 

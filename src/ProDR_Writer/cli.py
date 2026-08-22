@@ -164,6 +164,23 @@ def config(
 
 
 @app.command()
+def web(
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind address"),
+    port: int = typer.Option(8000, "--port", help="Port"),
+):
+    """Start the Web UI (generate documents and manage config in the browser)."""
+    import uvicorn
+
+    from .web.server import create_app
+
+    console.print(Panel.fit(
+        f"[bold]ProDR_Writer Web UI[/bold]\nhttp://{host}:{port}\n\n"
+        "Press Ctrl+C to stop.",
+        border_style="blue"))
+    uvicorn.run(create_app(), host=host, port=port, log_level="info")
+
+
+@app.command()
 def info():
     """Show current version and configuration summary."""
     table = Table(title=f"ProDR_Writer v{__version__}")

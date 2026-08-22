@@ -6,7 +6,9 @@ if [ -f .web.pid ] && kill -0 "$(cat .web.pid)" 2>/dev/null; then
     echo "Already running (PID $(cat .web.pid)). Use ./stop.sh first."
     exit 0
 fi
-HOST=${PRODR_HOST:-0.0.0.0}
+# 127.0.0.1 by default: the web UI has no authentication and can read/write
+# the stored LLM API key config — only expose it on your LAN deliberately.
+HOST=${PRODR_HOST:-127.0.0.1}
 PORT=${PRODR_PORT:-8000}
 nohup .venv/bin/python -m prodr_writer web --host "$HOST" --port "$PORT" > prodr-web.log 2>&1 &
 echo $! > .web.pid

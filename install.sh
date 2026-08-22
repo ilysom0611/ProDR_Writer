@@ -18,7 +18,7 @@ echo "==> Installing ProDR_Writer and dependencies"
 
 echo ""
 echo "✔ Installation complete."
-echo "  Start:   ./start.sh      (web UI, default http://0.0.0.0:8000)"
+echo "  Start:   ./start.sh      (web UI, default http://127.0.0.1:8000)"
 echo "  Stop:    ./stop.sh"
 echo "  Update:  ./update.sh"
 echo "  CLI:     .venv/bin/prodr-writer --help"

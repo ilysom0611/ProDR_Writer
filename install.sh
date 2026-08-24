@@ -33,16 +33,58 @@ else
     cd "$DEST"
 fi
 
-PY=${PYTHON:-python3}
-if ! command -v "$PY" >/dev/null 2>&1; then
-    echo "[ERROR] Python 3.10+ is required (tried: $PY). Set PYTHON=/path/to/python3 to override."
-    exit 1
+# ---- Locate a usable Python 3.10+ -------------------------------------
+python_ok() {
+    "$1" -c "import sys; sys.exit(0 if sys.version_info>=(3,10) else 1)" 2>/dev/null
+}
+
+PY=""
+if [ -n "$PYTHON" ]; then
+    python_ok "$PYTHON" && PY="$PYTHON"
+else
+    for cand in python3.13 python3.12 python3.11 python3 python; do
+        if command -v "$cand" >/dev/null 2>&1 && python_ok "$cand"; then
+            PY="$cand"
+            break
+        fi
+    done
 fi
 
-if ! "$PY" -c "import sys; sys.exit(0 if sys.version_info>=(3,10) else 1)" 2>/dev/null; then
-    echo "[ERROR] Python 3.10+ is required. Found: $("$PY" --version 2>&1)"
-    exit 1
+# ---- No usable Python? Provision a standalone CPython 3.11 -------------
+# (CentOS 7 et al. ship 3.6 as the system python; python-build-standalone's
+# install_only builds are static enough for glibc >= 2.17.)
+if [ -z "$PY" ]; then
+    if [ "$(uname -s)" != "Linux" ]; then
+        echo "[ERROR] Python 3.10+ is required. Install it, then re-run this script."
+        exit 1
+    fi
+    case "$(uname -m)" in
+        x86_64)  PSA_ARCH="x86_64" ;;
+        aarch64|arm64) PSA_ARCH="aarch64" ;;
+        *) echo "[ERROR] Unsupported architecture: $(uname -m). Install Python 3.10+ manually."; exit 1 ;;
+    esac
+    PSA_VER="3.11.7"
+    PSA_REL="20240107"
+    PSA_URL="https://github.com/astral-sh/python-build-standalone/releases/download/${PSA_REL}/cpython-${PSA_VER}%2B${PSA_REL}-${PSA_ARCH}-unknown-linux-gnu-install_only.tar.gz"
+    PSA_DIR="$PWD/.python"
+    echo "==> Python 3.10+ not found — provisioning standalone CPython ${PSA_VER} (${PSA_ARCH})"
+    mkdir -p "$PSA_DIR"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$PSA_URL" | tar -xz -C "$PSA_DIR" --strip-components=1 || true
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO- "$PSA_URL" | tar -xz -C "$PSA_DIR" --strip-components=1 || true
+    fi
+    if [ -x "$PSA_DIR/bin/python3" ] && python_ok "$PSA_DIR/bin/python3"; then
+        PY="$PSA_DIR/bin/python3"
+    else
+        echo "[ERROR] Could not provision Python automatically. Install Python 3.10+ manually,"
+        echo "        then re-run with: PYTHON=/path/to/python3 bash install.sh"
+        rm -rf "$PSA_DIR"
+        exit 1
+    fi
 fi
+
+echo "==> Using Python: $("$PY" --version 2>&1) ($("$PY" -c 'import sys; print(sys.executable)'))"
 
 echo "==> Creating virtual environment (.venv)"
 "$PY" -m venv .venv

@@ -5,6 +5,7 @@ Commands: generate (default), config, info.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -26,22 +27,40 @@ console = Console()
 INDUSTRIES = ["general", "insurance", "banking", "healthcare", "government",
               "telecom", "manufacturing", "retail", "energy"]
 
+# Generic API-key shape found inside litellm/provider error strings.
+_API_KEY_RE = re.compile(r"sk-[A-Za-z0-9]{8,}")
 
-def _interactive_inputs(project: Optional[str]) -> ProjectInput:
-    project = project or Prompt.ask("Project name")
-    client = Prompt.ask("Client name", default="")
-    vendor = Prompt.ask("Vendor name (your company)", default="")
-    industry = Prompt.ask(f"Industry {INDUSTRIES}", default="general")
+
+def redact_secrets(text: str, api_key: str = "") -> str:
+    """Strip API keys out of provider error strings before display/logging."""
+    if api_key:
+        text = text.replace(api_key, "***")
+    return _API_KEY_RE.sub("sk-***", text)
+
+
+def _interactive_inputs(project: Optional[str], provided: Optional[dict] = None) -> ProjectInput:
+    """Interactive prompts; answers already given on the command line are skipped."""
+    provided = provided or {}
+
+    def ask(key: str, prompt_text: str, **kwargs):
+        value = provided.get(key)
+        return value if value is not None else Prompt.ask(prompt_text, **kwargs)
+
+    project = provided.get("project_name") or project or Prompt.ask("Project name")
+    client = ask("client_name", "Client name", default="")
+    vendor = ask("vendor_name", "Vendor name (your company)", default="")
+    industry = ask("industry", f"Industry {INDUSTRIES}", default="general")
     while industry not in INDUSTRIES:
         industry = Prompt.ask("Please choose from the listed industries", default="general")
-    rto = Prompt.ask("Overall RTO target (e.g. '< 4 hours')", default="< 4 hours")
-    rpo = Prompt.ask("Overall RPO target (e.g. '< 1 hour')", default="< 1 hour")
-    budget = Prompt.ask("Budget range (e.g. 'USD 200k-300k')", default="")
+    rto = ask("overall_rto", "Overall RTO target (e.g. '< 4 hours')", default="< 4 hours")
+    rpo = ask("overall_rpo", "Overall RPO target (e.g. '< 1 hour')", default="< 1 hour")
+    budget = ask("budget", "Budget range (e.g. 'USD 200k-300k')", default="")
     return ProjectInput(project_name=project, client_name=client, vendor_name=vendor,
                         industry=industry, overall_rto=rto, overall_rpo=rpo, budget=budget)
 
 
-def _generate(inputs: ProjectInput, cfg: AppConfig, output_dir: Optional[Path]) -> dict:
+def _generate(inputs: ProjectInput, cfg: AppConfig, output_dir: Optional[Path],
+              fresh: bool = False) -> dict:
     missing = cfg.missing()
     if missing:
         console.print(Panel.fit(
@@ -57,7 +76,7 @@ def _generate(inputs: ProjectInput, cfg: AppConfig, output_dir: Optional[Path]) 
 
     from .pipeline import Pipeline  # deferred: heavy crewai import
 
-    _, summary = Pipeline(cfg).run(inputs)
+    _, summary = Pipeline(cfg, fresh=fresh).run(inputs)
     return summary
 
 
@@ -73,7 +92,7 @@ def main(
     """Generate a DR proposal document (default action when no command given)."""
     if ctx.invoked_subcommand is not None:
         return  # a real subcommand (config/info) was invoked — do NOT generate
-    cfg = AppConfig.load({"llm_model": None, "language": language, "profile": profile})
+    cfg = AppConfig.load({"language": language, "profile": profile})
     inputs_kwargs = {"language": cfg.language, "profile": cfg.profile}
     if interactive or not project:
         base = _interactive_inputs(project)
@@ -87,7 +106,8 @@ def main(
     except typer.Exit:
         raise
     except Exception as exc:  # noqa: BLE001 — single loud failure point
-        console.print(f"[red]Generation failed:[/red] {type(exc).__name__}: {exc}")
+        console.print(f"[red]Generation failed:[/red] "
+                      f"{type(exc).__name__}: {redact_secrets(str(exc), cfg.llm.api_key)}")
         raise typer.Exit(code=1)
     console.print(f"[green]Done.[/green] Document: {summary['docx']} "
                   f"(review rounds: {summary['review_rounds']}, final score: {summary['score']}, "
@@ -108,16 +128,21 @@ def generate(
     language: Optional[str] = typer.Option(None, "--language", "-L", help="en|zh"),
     profile: Optional[str] = typer.Option(None, "--profile"),
     output_dir: Optional[Path] = typer.Option(None, "--output-dir", "-o"),
+    fresh: bool = typer.Option(False, "--fresh", help="Ignore persisted stage artifacts and start over"),
     interactive: bool = typer.Option(False, "--interactive", "-i"),
 ):
     """Generate a DR proposal document."""
     cfg = AppConfig.load({"language": language, "profile": profile})
     if interactive or not project:
-        base = _interactive_inputs(project)
-        updates = {"language": language or base.language, "profile": profile or base.profile}
-        if client:
-            updates["client_name"] = client
-        inputs = base.model_copy(update=updates)
+        # Flags given on the command line pre-fill (skip) the matching prompts.
+        provided = {k: v for k, v in {
+            "project_name": project, "client_name": client, "vendor_name": vendor,
+            "industry": industry, "overall_rto": rto, "overall_rpo": rpo,
+            "budget": budget,
+        }.items() if v}
+        base = _interactive_inputs(project, provided)
+        inputs = base.model_copy(update={"language": language or base.language,
+                                         "profile": profile or base.profile})
     else:
         inputs = ProjectInput(
             project_name=project,
@@ -131,11 +156,12 @@ def generate(
             profile=profile or cfg.profile,
         )
     try:
-        summary = _generate(inputs, cfg, output_dir)
+        summary = _generate(inputs, cfg, output_dir, fresh=fresh)
     except typer.Exit:
         raise
     except Exception as exc:  # noqa: BLE001 — single loud failure point
-        console.print(f"[red]Generation failed:[/red] {type(exc).__name__}: {exc}")
+        console.print(f"[red]Generation failed:[/red] "
+                      f"{type(exc).__name__}: {redact_secrets(str(exc), cfg.llm.api_key)}")
         raise typer.Exit(code=1)
     console.print(f"[green]Done.[/green] Document: {summary['docx']} "
                   f"(review rounds: {summary['review_rounds']}, final score: {summary['score']}, "
@@ -152,7 +178,8 @@ def config(
     cfg = AppConfig.load()
     if test_only:
         ok, message = test_connection(cfg)
-        console.print(("[green]✔ Connection OK:[/green] " if ok else "[red]✘ Connection failed:[/red] ") + message)
+        console.print(("[green]✔ Connection OK:[/green] " if ok else "[red]✘ Connection failed:[/red] ")
+                      + redact_secrets(message, cfg.llm.api_key))
         raise typer.Exit(code=0 if ok else 1)
 
     console.print(Panel.fit("ProDR_Writer configuration\nSaved to ~/.prodr/config.yaml"))
@@ -174,7 +201,8 @@ def config(
     path = cfg.save()
     console.print(f"[green]Saved to[/green] {path}")
     ok, message = test_connection(cfg)
-    console.print(("[green]✔ Connection OK:[/green] " if ok else "[yellow]⚠ Connection check failed:[/yellow] ") + message)
+    console.print(("[green]✔ Connection OK:[/green] " if ok else "[yellow]⚠ Connection check failed:[/yellow] ")
+                  + redact_secrets(message, cfg.llm.api_key))
 
 
 @app.command()

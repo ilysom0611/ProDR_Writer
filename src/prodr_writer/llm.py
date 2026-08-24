@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Dict, Optional, Type, TypeVar
 
 from crewai import Agent, Crew, Task
@@ -98,6 +99,26 @@ def _balanced_json(text: str) -> Optional[Dict]:
 # Validated stage call
 # ---------------------------------------------------------------------------
 
+_AUTH_MARKERS = ("auth", "401", "api key", "api_key", "unauthorized")
+
+
+def _is_auth_error(exc: Exception) -> bool:
+    """Detect non-transient credential failures so we don't burn retries on them.
+
+    litellm raises provider-specific exception types, so besides checking for
+    AuthenticationError (when importable) we also match the usual markers in
+    the error text (e.g. '401', 'invalid api key').
+    """
+    try:
+        import litellm
+
+        if isinstance(exc, litellm.AuthenticationError):
+            return True
+    except Exception:  # noqa: BLE001 — litellm may not expose the type
+        pass
+    message = str(exc).lower()
+    return any(marker in message for marker in _AUTH_MARKERS)
+
 
 def run_stage(
     agent: Agent,
@@ -111,12 +132,30 @@ def run_stage(
 
     On parse/validation failure the validation errors are appended to the
     prompt and the stage is retried, instead of silently defaulting fields.
+    Transient API/network errors from kickoff() are also retried with
+    exponential backoff; authentication failures re-raise immediately since
+    retrying with the same credentials cannot succeed.
     """
     error_feedback = ""
     for attempt in range(1, max_retries + 2):
         desc = description + error_feedback
         task = Task(description=desc, agent=agent, expected_output=expected_output)
-        result = Crew(agents=[agent], tasks=[task]).kickoff()
+        try:
+            result = Crew(agents=[agent], tasks=[task]).kickoff()
+        except Exception as exc:  # noqa: BLE001 — litellm raises many types
+            if _is_auth_error(exc):
+                raise
+            console.print(
+                f"[yellow]  [{stage_name}] attempt {attempt}: {type(exc).__name__} "
+                f"from provider, retrying...[/yellow]"
+            )
+            if attempt > max_retries:
+                raise RuntimeError(
+                    f"Stage '{stage_name}' failed after {max_retries + 1} attempts "
+                    f"due to provider errors: {type(exc).__name__}: {exc}"
+                ) from exc
+            time.sleep(min(2 ** attempt, 30))  # exponential backoff, capped
+            continue
         raw = getattr(result, "raw", str(result))
         try:
             data = extract_json(raw)

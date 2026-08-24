@@ -1,10 +1,13 @@
-crewai>=1.12.0
-litellm>=1.65.0
-python-docx>=1.2.0
+# Single source of truth for runtime dependencies.
+# Consumed by install.sh (`pip install -r requirements.txt`) and by
+# pyproject.toml's dynamic `dependencies` (setuptools reads this file).
+crewai>=1.12.0,<2
+litellm>=1.65.0,<2
+python-docx>=1.2.0,<2
 pydantic>=2.0
 typer>=0.9.0
 rich>=10.11.0
-matplotlib>=3.5.0
+matplotlib>=3.5.0,<4
 PyYAML>=6.0
-fastapi>=0.110
-uvicorn>=0.29
+fastapi>=0.110,<1
+uvicorn>=0.29,<1

@@ -1,8 +1,11 @@
 """Generation pipeline: staged agent calls with persisted artifacts.
 
 Each stage writes its validated output to <run_dir>/<stage>.json, so a run is
-inspectable and resumable. The critic/optimizer loop feeds the optimized
-architecture back into the next review round (the original v1 never did).
+inspectable and resumable: when a stage's JSON already exists in the run
+directory and validates against its schema it is reused instead of calling the
+LLM again (`--fresh` ignores existing artifacts and starts over). The
+critic/optimizer loop persists every intermediate `review-{n}`/`optimize-{n}`
+round, and feeds the optimized architecture back into the next review round.
 """
 from __future__ import annotations
 
@@ -10,8 +13,9 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Callable, Optional, Tuple
+from typing import Callable, Dict, Optional, Tuple, Type
 
+from pydantic import BaseModel
 from rich.console import Console
 
 from . import prompts
@@ -27,7 +31,21 @@ from .schemas import (
     OptimizerResult,
     ProjectInput,
     ReviewResult,
+    STAGE_SCHEMAS,
 )
+
+try:  # merged from rules.py; interim local shim keeps the same contract
+    from .rules import compute_weighted_score
+except ImportError:  # pragma: no cover
+    def compute_weighted_score(dimension_scores: Dict[str, float], weights: Dict[str, float]) -> float:
+        """Weighted mean of dimension scores on a 0-100 scale (see rules.py contract)."""
+        overlap = {k: v for k, v in dimension_scores.items() if k in weights}
+        if not overlap:
+            return 0.0
+        total_weight = sum(weights[k] for k in overlap)
+        if total_weight <= 0:
+            return 0.0
+        return sum(v * weights[k] for k, v in overlap.items()) / total_weight
 
 NotifyFn = Optional[Callable[[dict], None]]
 
@@ -45,9 +63,10 @@ def slugify(name: str) -> str:
 
 
 class Pipeline:
-    def __init__(self, cfg: AppConfig, notify: NotifyFn = None):
+    def __init__(self, cfg: AppConfig, notify: NotifyFn = None, fresh: bool = False):
         self.cfg = cfg
         self.notify = notify or (lambda event: None)
+        self.fresh = fresh  # --fresh: ignore persisted stage artifacts
         self.profile = load_profile(cfg.profile)
         self.llm = build_llm(cfg)
         self.analyst = make_agent(
@@ -78,8 +97,7 @@ class Pipeline:
     # ------------------------------------------------------------------
     def run(self, inputs: ProjectInput) -> Tuple[Path, dict]:
         """Execute all stages; returns (run_dir, summary). Raises on failure."""
-        run_dir = Path(self.cfg.output_dir) / f"{slugify(inputs.project_name)}_{time.strftime('%Y%m%d_%H%M%S')}"
-        run_dir.mkdir(parents=True, exist_ok=True)
+        run_dir = self._prepare_run_dir(inputs)
 
         console.print(f"[bold]Run directory:[/bold] {run_dir}")
 
@@ -123,7 +141,64 @@ class Pipeline:
         }
 
     # ------------------------------------------------------------------
+    def _prepare_run_dir(self, inputs: ProjectInput) -> Path:
+        """Reuse the latest artifact-bearing run directory for resume; else create one."""
+        base = Path(self.cfg.output_dir)
+        slug = slugify(inputs.project_name)
+        if not self.fresh:
+            candidates = sorted(base.glob(f"{slug}_*"))
+            for candidate in reversed(candidates):
+                if candidate.is_dir() and (candidate / "bia.json").exists():
+                    console.print(f"[cyan]Resuming into existing run directory:[/cyan] {candidate}")
+                    return candidate
+        run_dir = base / f"{slug}_{time.strftime('%Y%m%d_%H%M%S')}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        return run_dir
+
+    @staticmethod
+    def _schema_for(stage: str) -> Optional[Type[BaseModel]]:
+        """Schema a persisted stage artifact must validate against."""
+        if stage in STAGE_SCHEMAS:
+            return STAGE_SCHEMAS[stage]
+        if re.match(r"^(review|optimize)-\d+$", stage):
+            return STAGE_SCHEMAS["review" if stage.startswith("review") else "optimizer"]
+        return None
+
+    def _load_stage(self, run_dir: Path, stage: str) -> Optional[BaseModel]:
+        """Load a persisted stage artifact, validating it against its schema."""
+        schema = self._schema_for(stage)
+        if schema is None:
+            return None
+        path = run_dir / f"{stage}.json"
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return schema.model_validate(data)
+        except Exception as exc:  # noqa: BLE001 — corrupt artifacts must not kill the run
+            console.print(f"[yellow]Ignoring unusable stage artifact {path.name}: "
+                          f"{type(exc).__name__}[/yellow]")
+            return None
+
+    def _run_or_resume(self, run_dir: Path, stage: str, fn):
+        """Call `fn` unless a valid persisted artifact for `stage` exists."""
+        if not self.fresh:
+            cached = self._load_stage(run_dir, stage)
+            if cached is not None:
+                console.print(f"[cyan]  resuming stage {stage} from disk[/cyan]")
+                return cached
+        result = fn()
+        path = run_dir / f"{stage}.json"
+        path.write_text(json.dumps(result.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8")
+        return result
+
     def _stage(self, run_dir: Path, stage: str, label: str, number: int, fn):
+        cached = None if self.fresh else self._load_stage(run_dir, stage)
+        if cached is not None:
+            console.print(f"[bold cyan]Step {number}/6: {label} — resuming stage {stage} from disk[/bold cyan]")
+            self.notify({"type": "stage", "stage": stage, "number": number, "label": label,
+                         "status": "done", "resumed": True})
+            return cached
         console.print(f"[bold cyan]Step {number}/6: {label}...[/bold cyan]")
         self.notify({"type": "stage", "stage": stage, "number": number, "label": label, "status": "running"})
         result = fn()
@@ -144,26 +219,59 @@ class Pipeline:
         return run_stage(self.architect, prompts.strategy_prompt(inputs.model_dump(), bia, state, self.cfg.language),
                          "JSON DR strategy", DRStrategy, "strategy")
 
+    def _scoring_weights(self) -> Dict[str, float]:
+        """Per-dimension weights from the profile (explicit scoring.weights first)."""
+        weights = (self.profile.get("scoring") or {}).get("weights")
+        if weights:
+            return {str(k): float(v) for k, v in weights.items()}
+        # Derive from the review_dimensions blocks that drive the critic prompt.
+        return {d["key"]: float(d.get("weight", 0))
+                for d in self.profile.get("review_dimensions", []) if d.get("key")}
+
+    def _recompute_score(self, review: ReviewResult) -> ReviewResult:
+        """Recompute the overall score from per-dimension scores + profile weights.
+
+        The critic's self-reported `score` is not guaranteed to be the weighted
+        mean of its own dimension scores, so when dimension_scores are present
+        the recomputed value is authoritative for the pass/optimize decision.
+        Falls back to the self-reported score when no dimensions were returned.
+        """
+        raw_dims = getattr(review, "dimension_scores", None) or {}
+        scores: Dict[str, float] = {}
+        for key, value in raw_dims.items():
+            if isinstance(value, dict):  # older LLM output nests {"score": n, ...}
+                value = value.get("score")
+            if isinstance(value, (int, float)):
+                scores[key] = float(value)
+        if not scores:
+            return review
+        recomputed = round(compute_weighted_score(scores, self._scoring_weights()))
+        if recomputed != review.score:
+            console.print(f"  [dim]recomputed weighted score from dimensions: "
+                          f"{review.score} → {recomputed}/100[/dim]")
+        return review.model_copy(update={"score": recomputed,
+                                         "can_proceed": recomputed >= PASS_SCORE})
+
     def _review_loop(
         self, inputs: ProjectInput, bia: BIAReport, state: CurrentStateReport,
         strategy: DRStrategy, run_dir: Path,
     ) -> Tuple[DRArchitecture, Optional[ReviewResult], int]:
         console.print(f"[bold cyan]Step 4/6: architecture & review loop...[/bold cyan]")
-        arch = run_stage(
+        arch: DRArchitecture = self._run_or_resume(run_dir, "architecture", lambda: run_stage(
             self.architect,
             prompts.architecture_prompt(inputs.model_dump(), bia, state, strategy, self.profile, self.cfg.language),
             "JSON DR architecture", DRArchitecture, "architecture",
-        )
+        ))
         review: Optional[ReviewResult] = None
         rounds = 0
         for round_num in range(1, MAX_REVIEW_ROUNDS + 1):
             rounds = round_num
             console.print(f"  [dim]--- Review round {round_num}/{MAX_REVIEW_ROUNDS} ---[/dim]")
-            review = run_stage(
+            review = self._recompute_score(self._run_or_resume(run_dir, f"review-{round_num}", lambda: run_stage(
                 self.critic,
                 prompts.critic_prompt(inputs.model_dump(), bia, strategy, arch, self.profile, self.cfg.language),
                 "JSON review result", ReviewResult, f"review-{round_num}",
-            )
+            )))
             console.print(f"  → score [bold]{review.score}[/bold]/100 "
                           + ("[green]passed[/green]" if review.can_proceed else "[yellow]needs optimization[/yellow]"))
             self.notify({"type": "review", "round": round_num, "score": review.score,
@@ -172,12 +280,15 @@ class Pipeline:
                 break
             self.notify({"type": "stage", "stage": "optimizer", "number": 4,
                          "label": f"optimizing architecture (round {round_num})", "status": "running"})
-            optimized = run_stage(
+            optimized: OptimizerResult = self._run_or_resume(run_dir, f"optimize-{round_num}", lambda: run_stage(
                 self.optimizer,
                 prompts.optimizer_prompt(arch, review, self.profile, self.cfg.language),
                 "JSON optimization result", OptimizerResult, f"optimize-{round_num}",
-            )
+            ))
             arch = DRArchitecture.model_validate(optimized.optimized_architecture)  # fed into next round
+            # Persist immediately so a crash mid-round loses nothing.
+            (run_dir / "architecture.json").write_text(
+                json.dumps(arch.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8")
             self.notify({"type": "stage", "stage": "optimizer", "number": 4,
                          "label": f"optimizing architecture (round {round_num})", "status": "done",
                          "changes": optimized.changes})

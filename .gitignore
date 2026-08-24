@@ -43,3 +43,4 @@ config.local.yaml
 .web.pid
 .web-token
 prodr-web.log
+.python/

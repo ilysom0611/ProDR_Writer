@@ -84,3 +84,29 @@ def test_numpages_field_in_footer(tmp_path: Path):
     with zipfile.ZipFile(out) as zf:
         footer_xmls = [zf.read(n) for n in zf.namelist() if "footer" in n]
     assert any(b"NUMPAGES" in xml for xml in footer_xmls)
+
+
+def test_build_document_survives_model_dump_roundtrip(tmp_path: Path):
+    """Regression (C1): Pipeline.run persists DRArchitecture via model_dump(),
+    which flattens site_separation / compliance_design into JSON *strings*.
+    build_document must accept that shape — this is the real LLM-run path."""
+    import json
+
+    from prodr_writer.schemas import DRArchitecture
+
+    from prodr_writer.docgen.builder import build_document
+
+    run = dict(_load_run())
+    arch = DRArchitecture(**run["architecture"])
+    run["architecture"] = arch.model_dump()
+    # model_dump() must actually have stringified the structured blocks.
+    assert isinstance(run["architecture"]["site_separation"], str)
+    assert isinstance(run["architecture"]["compliance_design"], str)
+    out = build_document(run, tmp_path)
+    assert out.exists() and out.stat().st_size > 20_000
+
+    # Prose fallback: a non-JSON free-text block must also render, not crash.
+    run["architecture"]["site_separation"] = "Primary site in Bangkok; DR site in Chiang Mai."
+    out2 = build_document(run, tmp_path)
+    assert out2.exists()
+    assert json  # keep import meaningful

@@ -219,7 +219,7 @@ def web(
         f"[bold]ProDR_Writer Web UI[/bold]\nhttp://{host}:{port}\n\n"
         "Press Ctrl+C to stop.",
         border_style="blue"))
-    uvicorn.run(create_app(), host=host, port=port, log_level="info")
+    uvicorn.run(create_app(host=host), host=host, port=port, log_level="info")
 
 
 @app.command()

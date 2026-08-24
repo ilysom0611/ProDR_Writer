@@ -35,8 +35,10 @@ class Job:
     _dropped: int = field(default=0, repr=False)  # events trimmed off the head
     _cond: threading.Condition = field(default_factory=threading.Condition, repr=False)
     # Async wakeup plumbing for SSE streams (see attach_async / detach_async).
-    _loop: Optional[asyncio.AbstractEventLoop] = field(default=None, repr=False)
-    _aevent: Optional[asyncio.Event] = field(default=None, repr=False)
+    # A list of (loop, event) waiters: several browsers tabs may stream the
+    # same job, and a single slot let one listener detach-blind the other.
+    _waiters: List[Tuple[asyncio.AbstractEventLoop, asyncio.Event]] = field(
+        default_factory=list, repr=False)
 
     # -- events -----------------------------------------------------------
     @property
@@ -72,23 +74,24 @@ class Job:
     def attach_async(self) -> asyncio.Event:
         """Bind an asyncio.Event on the current loop so worker threads can wake
         this SSE stream via call_soon_threadsafe (no threadpool token held)."""
-        self._loop = asyncio.get_running_loop()
-        self._aevent = asyncio.Event()
-        return self._aevent
+        event = asyncio.Event()
+        self._waiters.append((asyncio.get_running_loop(), event))
+        return event
 
-    def detach_async(self) -> None:
-        self._loop = None
-        self._aevent = None
+    def detach_async(self, event: Optional[asyncio.Event] = None) -> None:
+        """Remove one waiter (the given event, or all — e.g. on job teardown)."""
+        if event is None:
+            self._waiters.clear()
+        else:
+            self._waiters = [(l, ev) for l, ev in self._waiters if ev is not event]
 
     def _wake_async(self) -> None:
         """Thread-safe nudge for async waiters (called from worker threads)."""
-        loop, aevent = self._loop, self._aevent
-        if loop is None or aevent is None:
-            return
-        try:
-            loop.call_soon_threadsafe(aevent.set)
-        except RuntimeError:
-            pass  # event loop already closed; the stream is gone
+        for loop, aevent in list(self._waiters):
+            try:
+                loop.call_soon_threadsafe(aevent.set)
+            except RuntimeError:
+                pass  # that waiter's event loop is closed; its stream is gone
 
     # -- lifecycle ----------------------------------------------------------
     def begin(self) -> bool:

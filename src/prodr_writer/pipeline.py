@@ -9,6 +9,7 @@ round, and feeds the optimized architecture back into the next review round.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -141,18 +142,55 @@ class Pipeline:
         }
 
     # ------------------------------------------------------------------
+    @staticmethod
+    def _inputs_fingerprint(inputs: ProjectInput, profile: str) -> str:
+        """Stable hash over everything that changes the generated content."""
+        payload = json.dumps(
+            {"inputs": inputs.model_dump(), "profile": profile},
+            ensure_ascii=False, sort_keys=True, default=str,
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
     def _prepare_run_dir(self, inputs: ProjectInput) -> Path:
-        """Reuse the latest artifact-bearing run directory for resume; else create one."""
+        """Reuse the latest artifact-bearing run directory for resume; else create.
+
+        A cached run is only resumed when its recorded input fingerprint matches
+        the current inputs+profile — otherwise the run silently produced stale
+        documents after the user edited parameters.
+        """
         base = Path(self.cfg.output_dir)
         slug = slugify(inputs.project_name)
+        fingerprint = self._inputs_fingerprint(inputs, self.cfg.profile)
         if not self.fresh:
             candidates = sorted(base.glob(f"{slug}_*"))
             for candidate in reversed(candidates):
-                if candidate.is_dir() and (candidate / "bia.json").exists():
-                    console.print(f"[cyan]Resuming into existing run directory:[/cyan] {candidate}")
-                    return candidate
+                marker = candidate / ".inputs.json"
+                try:
+                    recorded = json.loads(marker.read_text(encoding="utf-8")).get("fingerprint")
+                except (OSError, ValueError):
+                    recorded = None
+                # The fingerprint alone decides reuse: a matching partial run
+                # (no artifacts yet) is safe to continue, while a mismatched
+                # one must never be touched even if it holds full artifacts.
+                if not candidate.is_dir():
+                    continue
+                if recorded != fingerprint:
+                    if recorded is not None or (candidate / "bia.json").exists():
+                        console.print(f"[yellow]Skipping run directory with different inputs:[/yellow] {candidate}")
+                    continue
+                console.print(f"[cyan]Resuming into existing run directory:[/cyan] {candidate}")
+                return candidate
+        # Same-second timestamps collide (e.g. right after skipping a
+        # mismatched run) — never reuse an existing directory, or stale stage
+        # artifacts from the old inputs would be resumed.
         run_dir = base / f"{slug}_{time.strftime('%Y%m%d_%H%M%S')}"
-        run_dir.mkdir(parents=True, exist_ok=True)
+        seq = 1
+        while run_dir.exists():
+            seq += 1
+            run_dir = base / f"{slug}_{time.strftime('%Y%m%d_%H%M%S')}_{seq}"
+        run_dir.mkdir(parents=True)
+        (run_dir / ".inputs.json").write_text(
+            json.dumps({"fingerprint": fingerprint}, ensure_ascii=False), encoding="utf-8")
         return run_dir
 
     @staticmethod

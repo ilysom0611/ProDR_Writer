@@ -21,7 +21,15 @@ if [ -f .web.pid ]; then
     # Only trust the pidfile if the process is alive AND is really ours.
     if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
         if looks_like_ours "$PID"; then
-            kill "$PID" && echo "✔ Stopped (PID $PID)"
+            kill "$PID" 2>/dev/null
+            # Wait briefly for a clean exit so a following start.sh does not
+            # lose the port-bind race.
+            for _ in $(seq 1 20); do
+                kill -0 "$PID" 2>/dev/null || break
+                sleep 0.5
+            done
+            kill -0 "$PID" 2>/dev/null && kill -9 "$PID" 2>/dev/null
+            echo "✔ Stopped (PID $PID)"
             stopped=1
         else
             echo "Ignoring stale .web.pid (PID $PID is not ProDR_Writer)."
@@ -35,10 +43,13 @@ fi
 if [ $stopped -eq 0 ]; then
     for pid in $(pgrep -f -- "-m prodr_writer web"); do
         case "$(proc_cmdline "$pid")" in
-            *"prodr_writer"*web*) kill "$pid"; stopped=1 ;;
+            *"prodr_writer"*web*) kill "$pid" 2>/dev/null; stopped=1 ;;
         esac
     done
     [ $stopped -eq 1 ] && echo "✔ Stopped matching processes"
 fi
 
-[ $stopped -eq 0 ] && echo "Not running."
+if [ $stopped -eq 0 ]; then
+    echo "Not running."
+fi
+exit 0

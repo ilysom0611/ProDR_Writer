@@ -6,6 +6,8 @@ language, and raise loudly on failure so missing figures are visible.
 """
 from __future__ import annotations
 
+import functools
+import threading
 import warnings
 from pathlib import Path
 from typing import Dict
@@ -16,6 +18,20 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 from ..schemas import BIAReport, DRArchitecture  # noqa: E402
+
+# pyplot's state (rcParams, figure registry) is process-global and not
+# thread-safe; the web UI renders charts from concurrent job threads, so all
+# chart entry points are serialized.
+_RENDER_LOCK = threading.RLock()
+
+
+def _serialized(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        with _RENDER_LOCK:
+            return func(*args, **kwargs)
+    return wrapper
+
 
 # Font candidates per language; first available one wins.
 _CJK_FONTS = ["Microsoft YaHei", "SimHei", "Noto Sans CJK SC", "PingFang SC", "WenQuanYi Micro Hei"]
@@ -50,6 +66,7 @@ def _finish(fig, out_path: Path) -> Path:
     return out_path
 
 
+@_serialized
 def tier_distribution_chart(bia: BIAReport, out_path: Path, labels: Dict[str, str],
                             language: str = "en") -> Path:
     """Bar chart: number of business systems per importance tier."""
@@ -70,6 +87,7 @@ def tier_distribution_chart(bia: BIAReport, out_path: Path, labels: Dict[str, st
     return _finish(fig, out_path)
 
 
+@_serialized
 def rto_rpo_chart(arch: DRArchitecture, out_path: Path, labels: Dict[str, str],
                   language: str = "en") -> Path:
     """Log-scale grouped bar of RTO/RPO targets per tier."""
@@ -97,6 +115,7 @@ def rto_rpo_chart(arch: DRArchitecture, out_path: Path, labels: Dict[str, str],
     return _finish(fig, out_path)
 
 
+@_serialized
 def topology_diagram(arch: DRArchitecture, out_path: Path, labels: Dict[str, str],
                      language: str = "en") -> Path:
     """Simple two-site topology diagram from the architecture's site info."""

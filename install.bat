@@ -28,9 +28,11 @@ if errorlevel 1 (
     echo [ERROR] Need either 'git' or PowerShell to download the source.
     exit /b 1
 )
-powershell -NoProfile -Command "try { Invoke-WebRequest -Uri 'https://github.com/ilysom0611/ProDR_Writer/archive/refs/heads/main.zip' -OutFile 'ProDR_Writer-main.zip'; Expand-Archive -Path 'ProDR_Writer-main.zip' -DestinationPath '.' -Force; Move-Item -Force 'ProDR_Writer-main' '%PRODR_DEST%' } catch { exit 1 }"
+powershell -NoProfile -Command "try { Invoke-WebRequest -Uri 'https://github.com/ilysom0611/ProDR_Writer/archive/refs/heads/main.zip' -OutFile 'ProDR_Writer-main.zip'; Expand-Archive -Path 'ProDR_Writer-main.zip' -DestinationPath '.' -Force; if (Test-Path -LiteralPath '%PRODR_DEST%') { Write-Host '      Destination already exists - removing previous download...'; Remove-Item -LiteralPath '%PRODR_DEST%' -Recurse -Force }; Move-Item -Force 'ProDR_Writer-main' '%PRODR_DEST%' } catch { Write-Host $_.Exception.Message; exit 1 }"
 if errorlevel 1 (
-    echo [ERROR] Download failed - check your network connection.
+    echo [ERROR] Download or extraction failed - check your network connection, or
+    echo         delete 'ProDR_Writer-main.zip' and any leftover 'ProDR_Writer'
+    echo         folder here manually, then re-run install.bat.
     exit /b 1
 )
 del ProDR_Writer-main.zip >nul 2>nul
@@ -53,6 +55,10 @@ python -c "import sys; sys.exit(0 if sys.version_info>=(3,10) else 1)" >nul 2>nu
 if errorlevel 1 (
     echo [ERROR] Python 3.10+ is required. Your version:
     python --version
+    echo         This installer cannot provision a suitable interpreter on Windows -
+    echo         that is currently supported on Linux only. Please install Python
+    echo         3.10 or newer manually from https://www.python.org/downloads/
+    echo         ^(tick 'Add python.exe to PATH' in the installer^), then re-run install.bat.
     exit /b 1
 )
 

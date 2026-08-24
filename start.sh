@@ -71,9 +71,31 @@ esac
 
 nohup .venv/bin/python -m prodr_writer web --host "$HOST" --port "$PORT" > prodr-web.log 2>&1 &
 echo $! > .web.pid
-sleep 2
 PID=$(cat .web.pid)
-if kill -0 "$PID" 2>/dev/null && looks_like_ours "$PID"; then
+
+# Poll for readiness (up to ~20s) instead of a fixed sleep — slow boxes, cold
+# caches or antivirus scans can otherwise make us declare failure while the
+# server is still coming up.
+port_open() {
+    .venv/bin/python -c 'import socket, sys
+s = socket.socket()
+s.settimeout(0.5)
+try:
+    s.connect(("127.0.0.1", int(sys.argv[1])))
+except OSError:
+    sys.exit(1)
+finally:
+    s.close()' "$PORT" >/dev/null 2>&1
+}
+
+ready=0
+for _ in $(seq 1 40); do
+    if ! kill -0 "$PID" 2>/dev/null; then break; fi
+    if port_open; then ready=1; break; fi
+    sleep 0.5
+done
+
+if [ $ready -eq 1 ] && looks_like_ours "$PID"; then
     echo "✔ Started (PID $PID)"
     echo "  Local:   http://127.0.0.1:$PORT"
     echo "  Network: $DISPLAY_URL"

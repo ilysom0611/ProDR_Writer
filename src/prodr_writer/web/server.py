@@ -30,15 +30,18 @@ _SK_RE = re.compile(r"sk-[A-Za-z0-9]{8,}")
 _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:")
 
 
-def _bind_host() -> str:
-    """Host the UI is expected to be served on.
+def _bind_host(explicit: Optional[str] = None) -> str:
+    """Host the UI is served on.
 
-    cli.py owns the uvicorn --host flag and cannot be changed here, so the
-    launchers (start.sh / start.bat) export PRODR_WEB_HOST to keep this module
-    in sync with what uvicorn actually binds; it defaults to loopback so the
-    zero-config localhost experience is unchanged.
+    Resolution order: create_app(host=...) argument (the real uvicorn bind,
+    passed by cli.py) > PRODR_WEB_HOST env (set by start.sh / start.bat) >
+    PRODR_HOST env > loopback. An unknown bind must fail closed: policy below
+    treats anything not provably loopback as token-required.
     """
-    return os.environ.get("PRODR_WEB_HOST") or os.environ.get("PRODR_HOST") or "127.0.0.1"
+    return (explicit
+            or os.environ.get("PRODR_WEB_HOST")
+            or os.environ.get("PRODR_HOST")
+            or "127.0.0.1").strip()
 
 
 def _is_loopback(host: str) -> bool:
@@ -113,9 +116,28 @@ def _public_summary(summary: dict) -> dict:
     return public
 
 
-def create_app() -> FastAPI:
-    host = _bind_host()
+def _resolve_output_dir(output_dir: str) -> Path:
+    """Resolve the configured output dir; relative paths anchor to the project
+    root (the repo checkout) rather than wherever the server was launched from,
+    so manually-started servers see the same history as start.sh does."""
+    path = Path(output_dir or "outputs")
+    if not path.is_absolute():
+        path = STATIC_DIR.parent.parent.parent / path
+    return path.resolve()
+
+
+def create_app(host: Optional[str] = None) -> FastAPI:
+    # `host` must be what uvicorn will ACTUALLY bind — deriving it from the
+    # environment alone let `prodr-writer web --host 0.0.0.0` run with the app
+    # still believing it was loopback (no token middleware + localhost-only
+    # Host allowlist), which both broke LAN serving and enabled an auth bypass.
+    bind = _bind_host(host)
     token = os.environ.get("PRODR_WEB_TOKEN", "").strip()
+    if not _is_loopback(bind) and not token:
+        print(f"[ProDR_Writer] Refusing to start: binding to {bind} requires "
+              "the PRODR_WEB_TOKEN environment variable.", file=sys.stderr)
+        raise SystemExit(2)
+    host = bind
 
     # -- Host allowlist + token policy ------------------------------------
     if _is_loopback(host):
@@ -282,7 +304,7 @@ def create_app() -> FastAPI:
                         yield 'data: {"type": "error", "error": "timeout"}\n\n'
                         return
             finally:
-                job.detach_async()
+                job.detach_async(waiter)
 
         return StreamingResponse(stream(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -316,7 +338,7 @@ def create_app() -> FastAPI:
     def history(limit: int = 30):
         limit = max(1, min(limit, 200))  # clamp: negative limit truncated the wrong end
         cfg = AppConfig.load()
-        out_dir = Path(cfg.output_dir)
+        out_dir = _resolve_output_dir(cfg.output_dir)
         runs = []
         if out_dir.is_dir():
             entries = []
@@ -358,7 +380,7 @@ def create_app() -> FastAPI:
                 or _WINDOWS_DRIVE_RE.match(name)):
             raise HTTPException(status_code=400, detail="Invalid run name")
         cfg = AppConfig.load()
-        out_dir = Path(cfg.output_dir or "outputs").resolve()
+        out_dir = _resolve_output_dir(cfg.output_dir)
         target = (out_dir / name).resolve()
         if not target.is_relative_to(out_dir):  # e.g. Path("outputs")/"C:" -> "C:"
             raise HTTPException(status_code=400, detail="Invalid run name")

@@ -15,7 +15,24 @@ rem server.py derives its Host allowlist / token requirement from this env var,
 rem so keep it in sync with the address uvicorn actually binds.
 set "PRODR_WEB_HOST=%PRODR_HOST%"
 
-rem Single-instance guard: refuse to start if the port is already listening.
+rem Single-instance guard: refuse to start if a live ProDR_Writer python
+rem process is recorded in .web.pid (written below once the server is up).
+if not exist .web.pid goto :no_pidfile
+set /p OLD_PID=<.web.pid 2>nul
+echo %OLD_PID%| findstr /R "^[0-9][0-9]*$" >nul 2>nul
+if errorlevel 1 goto :stale_pid
+tasklist /FI "PID eq %OLD_PID%" 2>nul | findstr /I /B /C:"python" >nul 2>nul
+if errorlevel 1 goto :stale_pid
+echo Already running ^(PID %OLD_PID%^). Use stop.bat first.
+exit /b 0
+
+:stale_pid
+echo Replacing stale .web.pid ^(PID %OLD_PID% is not ProDR_Writer^).
+del .web.pid >nul 2>nul
+:no_pidfile
+
+rem Backstop guard: the port itself is busy (e.g. another app or a server this
+rem pidfile never knew about).
 netstat -ano | findstr /C:":%PRODR_PORT% " | findstr /I "LISTENING" >nul 2>nul
 if not errorlevel 1 (
     echo [ERROR] Port %PRODR_PORT% is already in use - is ProDR_Writer already running? Use stop.bat first.
@@ -29,9 +46,15 @@ if "%LAN_IP%"=="" set "LAN_IP=<this-host>"
 
 rem Non-loopback binds require a token; generate one on first start and reuse
 rem it afterwards so the printed URL stays stable across restarts.
-if "%PRODR_WEB_TOKEN%"=="" goto :load_token
-goto :have_token
-:load_token
+rem Loopback-only binds (localhost / 127.x / ::1) need none - mirror start.sh.
+set "IS_LOOPBACK="
+if /I "%PRODR_HOST%"=="localhost" set "IS_LOOPBACK=1"
+if "%PRODR_HOST%"=="::1" set "IS_LOOPBACK=1"
+if defined IS_LOOPBACK goto :have_token
+echo %PRODR_HOST%| findstr /B /C:"127." >nul 2>nul
+if not errorlevel 1 goto :have_token
+
+if not "%PRODR_WEB_TOKEN%"=="" goto :have_token
 if not exist .web-token goto :make_token
 set /p PRODR_WEB_TOKEN=<.web-token
 if not "%PRODR_WEB_TOKEN%"=="" goto :have_token
@@ -40,18 +63,48 @@ for /f "usebackq delims=" %%t in (`powershell -NoProfile -Command "[guid]::NewGu
 >.web-token echo %PRODR_WEB_TOKEN%
 :have_token
 
-start "ProDR_Writer" /min cmd /c ".venv\Scripts\python -m prodr_writer web --host "%PRODR_HOST%" --port "%PRODR_PORT%" ^> prodr-web.log 2^>^&1"
-timeout /t 3 /nobreak >nul
-
-rem Verify the process actually came up before claiming success.
-netstat -ano | findstr /C:":%PRODR_PORT% " | findstr /I "LISTENING" >nul 2>nul
+rem Launch detached via Start-Process: a hidden window (no console title to
+rem match on stop), stdout+stderr into prodr-web.log, immune to the nested
+rem quoting that broke `start ... cmd /c` invocations.
+powershell -NoProfile -Command "$p = Start-Process -WindowStyle Hidden -FilePath '.venv\Scripts\python.exe' -ArgumentList '-m','prodr_writer','web','--host','%PRODR_HOST%','--port','%PRODR_PORT%' -RedirectStandardOutput 'prodr-web.log' -RedirectStandardError 'prodr-web.err.log' -PassThru; exit 0"
 if errorlevel 1 (
-    echo [ERROR] Failed to start - see prodr-web.log:
-    type prodr-web.log
+    echo [ERROR] Could not launch the server process.
     exit /b 1
 )
-echo [OK] Started
+
+rem Poll for readiness (up to ~20s) instead of a fixed sleep - slow starts,
+rem cold caches or antivirus scans must not be declared failed while the
+rem server is still coming up.
+set /a TRIES=0
+:wait_ready
+powershell -NoProfile -Command "$c=New-Object Net.Sockets.TcpClient; try { $w=$c.BeginConnect('127.0.0.1',%PRODR_PORT%,$null,$null); if ($w.AsyncWaitHandle.WaitOne(500) -and $c.Connected) { exit 0 } else { exit 1 } } catch { exit 1 } finally { $c.Close() }" >nul 2>nul
+if not errorlevel 1 goto :port_up
+set /a TRIES+=1
+if %TRIES% geq 20 (
+    echo [ERROR] Failed to start - see prodr-web.log:
+    type prodr-web.log 2>nul
+    exit /b 1
+)
+ping -n 2 127.0.0.1 >nul
+goto :wait_ready
+
+rem Record the PID of whoever is now listening so stop.bat can target it.
+:port_up
+set "WEB_PID="
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr /C:":%PRODR_PORT% " ^| findstr /I "LISTENING"') do set "WEB_PID=%%p"
+tasklist /FI "PID eq %WEB_PID%" 2>nul | findstr /I /B /C:"python" >nul 2>nul
+if errorlevel 1 (
+    echo [ERROR] Port %PRODR_PORT% came up but is not held by a python process - see prodr-web.log:
+    type prodr-web.log 2>nul
+    exit /b 1
+)
+>.web.pid echo %WEB_PID%
+echo [OK] Started ^(PID %WEB_PID%^)
 echo   Local:   http://127.0.0.1:%PRODR_PORT%
-echo   Network: http://%LAN_IP%:%PRODR_PORT%   ^(token: %PRODR_WEB_TOKEN%^)
-echo   Log:     prodr-web.log, window title: ProDR_Writer
+if defined PRODR_WEB_TOKEN (
+    echo   Network: http://%LAN_IP%:%PRODR_PORT%   ^(token: %PRODR_WEB_TOKEN%^)
+) else (
+    echo   Network: http://%LAN_IP%:%PRODR_PORT%
+)
+echo   Log:     prodr-web.log
 endlocal

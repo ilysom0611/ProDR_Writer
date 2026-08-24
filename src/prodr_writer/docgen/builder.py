@@ -149,6 +149,39 @@ class Builder:
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _structured_block(value) -> tuple:
+    """Normalize an optional structured architecture block into (mapping, prose).
+
+    Real LLM runs persist DRArchitecture through model_dump(), which stores
+    site_separation / compliance_design as JSON *strings* (see
+    DRArchitecture._flatten_structured_block); demo mode and tests pass raw
+    dicts, and some models emit plain prose. All three shapes must render.
+    Returns ({key: value}, "") for usable mappings, ({}, text) for prose.
+    """
+    if value is None:
+        return {}, ""
+    if isinstance(value, dict):
+        return {str(k): v for k, v in value.items()}, ""
+    text = str(value).strip()
+    if not text or text.lower() in ("none", "null"):
+        return {}, ""
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return {}, text  # plain prose paragraph
+    if isinstance(parsed, dict):
+        return {str(k): v for k, v in parsed.items()}, ""
+    if isinstance(parsed, list):  # list of aspects: render each entry as prose
+        lines = []
+        for item in parsed:
+            if isinstance(item, dict):
+                lines.append(", ".join(f"{k}: {v}" for k, v in item.items() if v))
+            else:
+                lines.append(str(item))
+        return {}, "\n".join(line for line in lines if line)
+    return {}, str(parsed)
+
+
 def build_document(run: dict, run_dir: Path) -> Path:
     language = run.get("language", "en")
     res = _load_resources(language)
@@ -310,7 +343,7 @@ def build_document(run: dict, run_dir: Path) -> Path:
     # -- 6. Architecture ---------------------------------------------------------
     b.heading(chapters["architecture"], 1)
     b.para(res["sentences"]["architecture_intro"])
-    site_sep = arch.get("site_separation", {}) or {}
+    site_sep, site_prose = _structured_block(arch.get("site_separation"))
     b.labeled_table(labels["deployment_mode"],
                     [labels["deployment_mode"], labels["primary_site"], labels["dr_site"]],
                     [[arch.get("deployment_mode", ""),
@@ -318,6 +351,8 @@ def build_document(run: dict, run_dir: Path) -> Path:
                       f"{arch.get('dr_site', {}).get('name', '')} ({arch.get('dr_site', {}).get('location', '')})"]])
     if site_sep:
         b.para(", ".join(f"{k}: {v}" for k, v in site_sep.items() if v))
+    elif site_prose:
+        b.para(site_prose)
     b.labeled_table(labels["recovery_strategy"],
                     [labels["tier"], labels["systems"], labels["recovery_strategy"],
                      labels["rto"], labels["rpo"], labels["replication"], labels["failover"]],
@@ -355,11 +390,14 @@ def build_document(run: dict, run_dir: Path) -> Path:
     if comp_rows:
         b.labeled_table(labels["requirement"],
                         [labels["framework"], labels["requirement"], labels["status"]], comp_rows)
-    compliance_design = arch.get("compliance_design", {}) or {}
+    compliance_design, compliance_prose = _structured_block(arch.get("compliance_design"))
     if any(compliance_design.values()):
         b.labeled_table(labels["compliance_design"],
                         [labels["aspect"], labels["design"]],
                         [[_schema_label(labels, k), v] for k, v in compliance_design.items() if v])
+    elif compliance_prose:
+        b.heading(_schema_label(labels, "compliance_design"), 2)
+        b.para(compliance_prose)
 
     # -- 8. Roadmap ------------------------------------------------------------
     b.heading(chapters["roadmap"], 1)

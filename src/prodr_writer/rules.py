@@ -12,33 +12,41 @@ from typing import List, Optional
 from .profiles import localized
 from .schemas import BIAReport, DRArchitecture, DRStrategy, Finding, ProjectInput, ValidationReport
 
-# Matches the LAST number+unit in a duration expression so range upper bounds win
-# ("1-2 hours" → 2h): the upper bound is the binding promise to the customer.
-_DURATION_RE = re.compile(
+# Range expression: "<lo>-<hi> <unit>" / "<lo> to <hi> <unit>". The upper bound
+# wins — it is the binding promise to the customer ("1-2 hours" → 2h).
+_RANGE_RE = re.compile(
     r"(\d+(?:\.\d+)?)\s*(?:-|–|—|to)\s*(\d+(?:\.\d+)?)\s*"
-    r"(?:(?:full|half)\s*)?(min(?:ute)?s?|分钟|hours?|小时|h|days?|d|天)?"
-    r"|(\d+(?:\.\d+)?)\s*"
     r"(?:(?:full|half)\s*)?(min(?:ute)?s?|分钟|hours?|小时|h|days?|d|天)?",
     re.IGNORECASE,
 )
-_UNIT_MINUTES = {"min": 1, "mins": 1, "minute": 1, "minutes": 1, "分钟": 1,
+# One number+unit pair; compounds like "1h30m" / "2 days 4 hours" are summed.
+_PAIR_RE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(?:(?:full|half)\s*)?(min(?:ute)?s?|分钟|hours?|小时|h|days?|d|天|m)",
+    re.IGNORECASE,
+)
+_BARE_NUMBER_RE = re.compile(r"^\d+(?:\.\d+)?$")
+_UNIT_MINUTES = {"min": 1, "mins": 1, "minute": 1, "minutes": 1, "分钟": 1, "m": 1,
                  "h": 60, "hour": 60, "hours": 60, "小时": 60,
                  "d": 1440, "day": 1440, "days": 1440, "天": 1440}
 
 
-def _unit_minutes(unit: Optional[str]) -> float:
-    text = (unit or "min").lower().strip()
+def _unit_minutes(unit: str) -> float:
+    text = unit.lower().strip()
     # '2 full hours' / '1 full day': the qualifier does not change the unit.
     text = re.sub(r"^(?:full|half)\s+", "", text)
-    return _UNIT_MINUTES.get(text, 1)
+    return _UNIT_MINUTES.get(text, 0.0)
 
 
 def parse_minutes(value: str) -> Optional[float]:
     """Parse a human duration expression into minutes; None when unparseable.
 
-    Handles '≤4h', '<30min', '>30min', '>=2 hours', '~1 hour', '0',
-    '24 hours', '1 full day', 'half an hour', and ranges like '1-2 hours'
-    (the upper bound is taken: it is the binding promise).
+    Handles '≤4h', '<30min', '>30min', '>=2 hours', '~1 hour',
+    '24 hours', '1 full day', 'half an hour', compounds like '1h30m'
+    and '2 days 4 hours', and ranges like '1-2 hours' (upper bound taken).
+
+    A bare number WITHOUT a unit returns None instead of guessing minutes:
+    '3 business days' must never silently become 3 minutes — that would hide
+    real RTO/RPO violations from the Validation chapter.
     """
     if value is None:
         return None
@@ -46,18 +54,21 @@ def parse_minutes(value: str) -> Optional[float]:
     if not text or text.lower() in ("n/a", "na", "-"):
         return None
     # Comparison prefixes do not change the value ('>30min' means 30 min or worse).
-    text = re.sub(r"^[><≥≤~=]+\s*", "", text)
+    text = re.sub(r"^[><≥≤~=]+\s*", "", text).strip()
     lowered = text.lower()
     if lowered in ("half an hour", "half hour"):
         return 30.0
-    match = _DURATION_RE.search(text)
-    if not match:
-        return None
-    lo, hi, range_unit, single, single_unit = match.groups()
-    if hi is not None:
-        # Range expression: take the upper bound.
-        return float(hi) * _unit_minutes(range_unit)
-    return float(single) * _unit_minutes(single_unit)
+    if _BARE_NUMBER_RE.match(text):
+        # Unit-less zero is unambiguous; any other bare number is not.
+        return 0.0 if float(text) == 0 else None
+    range_match = _RANGE_RE.search(text)
+    if range_match and range_match.group(3):
+        return float(range_match.group(2)) * _unit_minutes(range_match.group(3))
+    pairs = list(_PAIR_RE.finditer(text))
+    if pairs:
+        return sum(float(num) * _unit_minutes(unit)
+                   for num, unit in ((m.group(1), m.group(2)) for m in pairs))
+    return None
 
 
 def compute_weighted_score(dimension_scores: dict[str, float], weights: dict[str, float]) -> float:

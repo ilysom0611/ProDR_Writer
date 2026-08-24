@@ -104,7 +104,7 @@ $("#cfg-form").addEventListener("submit", async (ev) => {
       }),
     });
     f.api_key.value = "";
-    showStatus(`Saved. ${f.base_url.value ? "" : ""}`, "");
+    showStatus("Saved.", "");
     toast("Configuration saved", "ok");
     loadConfig();
   } catch (e) { toast(`Save failed: ${e.message}`, "err"); }

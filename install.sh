@@ -40,7 +40,12 @@ python_ok() {
 
 PY=""
 if [ -n "$PYTHON" ]; then
-    python_ok "$PYTHON" && PY="$PYTHON"
+    if ! python_ok "$PYTHON"; then
+        echo "[ERROR] PYTHON=$PYTHON is not a usable Python 3.10+ interpreter."
+        echo "        Point PYTHON at a valid interpreter or unset it to auto-detect."
+        exit 1
+    fi
+    PY="$PYTHON"
 else
     for cand in python3.13 python3.12 python3.11 python3 python; do
         if command -v "$cand" >/dev/null 2>&1 && python_ok "$cand"; then
@@ -65,15 +70,35 @@ if [ -z "$PY" ]; then
     esac
     PSA_VER="3.11.7"
     PSA_REL="20240107"
-    PSA_URL="https://github.com/astral-sh/python-build-standalone/releases/download/${PSA_REL}/cpython-${PSA_VER}%2B${PSA_REL}-${PSA_ARCH}-unknown-linux-gnu-install_only.tar.gz"
+    PSA_BASE="https://github.com/astral-sh/python-build-standalone/releases/download/${PSA_REL}"
+    PSA_TGZ="cpython-${PSA_VER}+${PSA_REL}-${PSA_ARCH}-unknown-linux-gnu-install_only.tar.gz"
+    PSA_URL="${PSA_BASE}/${PSA_TGZ}"
+    PSA_SHA_URL="${PSA_BASE}/${PSA_TGZ}.sha256"
     PSA_DIR="$PWD/.python"
     echo "==> Python 3.10+ not found — provisioning standalone CPython ${PSA_VER} (${PSA_ARCH})"
-    mkdir -p "$PSA_DIR"
+    TMP_TGZ="$(mktemp)"
+    trap 'rm -f "$TMP_TGZ"' EXIT
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$PSA_URL" | tar -xz -C "$PSA_DIR" --strip-components=1 || true
+        curl -fsSL "$PSA_URL" -o "$TMP_TGZ"
     elif command -v wget >/dev/null 2>&1; then
-        wget -qO- "$PSA_URL" | tar -xz -C "$PSA_DIR" --strip-components=1 || true
+        wget -qO "$TMP_TGZ" "$PSA_URL"
+    else
+        echo "[ERROR] Need 'curl' or 'wget' to download the standalone interpreter." >&2
+        rm -f "$TMP_TGZ"; exit 1
     fi
+    # Verify the SHA256 checksum published alongside the release asset before
+    # extracting anything — a corrupted or tampered tarball must not be unpacked.
+    EXPECTED="$( (curl -fsSL "$PSA_SHA_URL" 2>/dev/null || wget -qO- "$PSA_SHA_URL" 2>/dev/null) | awk '{print $1}')"
+    ACTUAL="$( (sha256sum "$TMP_TGZ" 2>/dev/null || shasum -a 256 "$TMP_TGZ") | awk '{print $1}')"
+    if [ -z "$EXPECTED" ] || [ "$EXPECTED" != "$ACTUAL" ]; then
+        echo "[ERROR] SHA256 verification of the downloaded interpreter failed."
+        echo "        expected: ${EXPECTED:-<unavailable>}"
+        echo "        actual:   $ACTUAL"
+        rm -f "$TMP_TGZ"
+        exit 1
+    fi
+    mkdir -p "$PSA_DIR"
+    tar -xzf "$TMP_TGZ" -C "$PSA_DIR" --strip-components=1
     if [ -x "$PSA_DIR/bin/python3" ] && python_ok "$PSA_DIR/bin/python3"; then
         PY="$PSA_DIR/bin/python3"
     else
@@ -90,10 +115,21 @@ echo "==> Creating virtual environment (.venv)"
 "$PY" -m venv .venv
 
 echo "==> Installing ProDR_Writer and dependencies"
+PIP_ARGS="-e ."
+if [ "$(uname -s)" = "Linux" ] && command -v ldd >/dev/null 2>&1; then
+    GLIBC_VER="$(ldd --version 2>/dev/null | awk 'NR==1{print $NF}')"
+    GLIBC_MAJOR="${GLIBC_VER%%.*}"
+    GLIBC_MINOR="${GLIBC_VER#*.}"
+    if [ "${GLIBC_MAJOR:-0}" -lt 2 ] || { [ "$GLIBC_MAJOR" = "2" ] && [ "${GLIBC_MINOR:-99}" -lt 28 ]; }; then
+        echo "==> Detected older glibc (${GLIBC_VER}) — applying compatibility constraints"
+        PIP_ARGS="-c requirements-oldglibc.txt -e ."
+    fi
+fi
 # Tolerate a transient network failure during the pip self-upgrade — it is
 # optional and must not abort the whole install.
 .venv/bin/pip install --upgrade pip -q || true
-.venv/bin/pip install -e . -q
+# shellcheck disable=SC2086
+.venv/bin/pip install $PIP_ARGS -q
 
 echo ""
 echo "✔ Installation complete in $(pwd)"

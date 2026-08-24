@@ -13,7 +13,9 @@ echo "==> Creating virtual environment (.venv)"
 "$PY" -m venv .venv
 
 echo "==> Installing ProDR_Writer and dependencies"
-.venv/bin/pip install --upgrade pip -q
+# Tolerate a transient network failure during the pip self-upgrade — it is
+# optional and must not abort the whole install.
+.venv/bin/pip install --upgrade pip -q || true
 .venv/bin/pip install -e . -q
 
 echo ""

@@ -5,16 +5,23 @@ title:
 industry_hint: insurance
 region: thailand
 
-regulatory_context: |
-  - The Office of Insurance Commission (OIC) of Thailand requires insurers to
-    maintain off-site disaster recovery capability with core-system RTO <= 4 hours
-    and RPO <= 1 hour.
-  - Thailand Personal Data Protection Act (PDPA) governs cross-border transfer of
-    personal data; primary and DR data should remain in Thailand unless an
-    approved safeguard is documented.
-  - Retention of insurance records must be at least 7 years.
-  - Off-site DR (sufficient geographical separation from the primary site) is
-    mandatory; annual DR testing with evidence reported to regulators.
+regulatory_context:
+  en: |
+    - The Office of Insurance Commission (OIC) of Thailand requires insurers to
+      maintain off-site disaster recovery capability with core-system RTO <= 4 hours
+      and RPO <= 1 hour.
+    - Thailand Personal Data Protection Act (PDPA) governs cross-border transfer of
+      personal data; primary and DR data should remain in Thailand unless an
+      approved safeguard is documented.
+    - Retention of insurance records must be at least 7 years.
+    - Off-site DR (sufficient geographical separation from the primary site) is
+      mandatory; annual DR testing with evidence reported to regulators.
+  zh: |
+    - 泰国保险业监督管理委员会（OIC）要求保险公司建立异地灾备能力，核心系统 RTO <= 4 小时、RPO <= 1 小时。
+    - 泰国《个人数据保护法》（PDPA）规范个人数据跨境传输；除非有经批准的保障措施并留有书面记录，
+      主数据中心与灾备数据均应保留在泰国境内。
+    - 保险记录留存期不得少于 7 年。
+    - 必须建设异地灾备（与主中心保持足够的地理距离）；每年须进行灾备演练并向监管机构提交证据。
 
 constraints:
   P0: { rpo_max_minutes: 0, rto_max_minutes: 30 }

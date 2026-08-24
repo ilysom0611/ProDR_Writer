@@ -5,7 +5,7 @@ Precedence: CLI arguments > environment variables > config file (~/.prodr/config
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -20,6 +20,9 @@ CONFIG_FILE = CONFIG_DIR / "config.yaml"
 ENV_API_KEY = "PRODR_API_KEY"
 ENV_BASE_URL = "PRODR_BASE_URL"
 ENV_MODEL = "PRODR_MODEL"
+
+# LLM fields that must be numeric; used to coerce file values and overrides.
+_NUMERIC_LLM_FIELDS = {"temperature": float, "max_tokens": int, "request_timeout": int}
 
 
 @dataclass
@@ -53,13 +56,26 @@ class AppConfig:
                 console.print(f"[yellow]Warning: ignoring malformed config file: {exc}[/yellow]")
 
         llm_file = file_cfg.get("llm", {}) or {}
+
+        def _coerce(key: str, default: Any, cast: type) -> Any:
+            """Cast an optional config value; warn and fall back on bad types."""
+            raw = llm_file.get(key)
+            if raw is None:
+                return default
+            try:
+                return cast(raw)
+            except (TypeError, ValueError):
+                console.print(f"[yellow]Warning: invalid llm.{key} value {raw!r}; "
+                              f"using default {default}[/yellow]")
+                return default
+
         llm = LLMConfig(
-            base_url=os.environ.get(ENV_BASE_URL, llm_file.get("base_url", "")),
-            api_key=os.environ.get(ENV_API_KEY, llm_file.get("api_key", "")),
-            model=os.environ.get(ENV_MODEL, llm_file.get("model", "")),
-            temperature=float(llm_file.get("temperature", 0.3)),
-            max_tokens=int(llm_file.get("max_tokens", 8192)),
-            request_timeout=int(llm_file.get("request_timeout", 300)),
+            base_url=os.environ.get(ENV_BASE_URL, str(llm_file.get("base_url", "") or "")),
+            api_key=os.environ.get(ENV_API_KEY, str(llm_file.get("api_key", "") or "")),
+            model=os.environ.get(ENV_MODEL, str(llm_file.get("model", "") or "")),
+            temperature=_coerce("temperature", 0.3, float),
+            max_tokens=_coerce("max_tokens", 8192, int),
+            request_timeout=_coerce("request_timeout", 300, int),
         )
         cfg = cls(
             llm=llm,
@@ -68,13 +84,28 @@ class AppConfig:
             output_dir=str(file_cfg.get("output_dir", "outputs")),
         )
 
+        llm_fields = {f.name for f in fields(LLMConfig)}
+        app_fields = {f.name for f in fields(AppConfig) if f.name != "llm"}
         for key, value in (overrides or {}).items():
             if value is None:
                 continue
             if key.startswith("llm_"):
-                setattr(cfg.llm, key[4:], value)
-            else:
+                field_name = key[4:]
+                if field_name in llm_fields:
+                    cast = _NUMERIC_LLM_FIELDS.get(field_name)
+                    try:
+                        value = cast(value) if cast else value
+                    except (TypeError, ValueError):
+                        console.print(f"[yellow]Warning: invalid value {value!r} for "
+                                      f"'{key}'; keeping current setting[/yellow]")
+                        continue
+                    setattr(cfg.llm, field_name, value)
+                else:
+                    console.print(f"[yellow]Warning: ignoring unknown LLM override '{key}'[/yellow]")
+            elif key in app_fields:
                 setattr(cfg, key, value)
+            else:
+                console.print(f"[yellow]Warning: ignoring unknown config override '{key}'[/yellow]")
         return cfg
 
     def save(self) -> Path:

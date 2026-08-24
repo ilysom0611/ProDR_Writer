@@ -5,13 +5,21 @@ validation is retried with the validation errors fed back to the LLM.
 """
 from __future__ import annotations
 
+import json
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+# Minimum weighted review score for a stage to pass. Single source of truth:
+# prompts.py quotes it in the review task and pipeline.py recomputes with it.
+PASS_SCORE_THRESHOLD = 90
+
 
 class _Strict(BaseModel):
-    model_config = ConfigDict(extra="allow")  # keep LLM-added fields instead of dropping them
+    # extra="ignore": garbage extras from LLM responses must not silently flow
+    # into documents. DRArchitecture declares the requested optional blocks
+    # explicitly instead of relying on permissive extras.
+    model_config = ConfigDict(extra="ignore")
 
 
 class ProjectInput(_Strict):
@@ -103,7 +111,10 @@ class ReviewIssue(_Strict):
 class ReviewResult(_Strict):
     score: int
     can_proceed: bool = False
-    dimension_scores: Dict[str, Dict[str, object]] = {}
+    # Per-dimension scores keyed by the profile's review dimension keys,
+    # values 0-100. Used by the pipeline to recompute the weighted score
+    # (see rules.compute_weighted_score) instead of trusting self-reported totals.
+    dimension_scores: Dict[str, float] = {}
     issues: List[ReviewIssue] = []
     summary: str = ""
 
@@ -124,13 +135,20 @@ class ReviewResult(_Strict):
         if isinstance(v, str) and v.strip().lower() in ("true", "false"):
             return v.strip().lower() == "true"
         score = info.data.get("score")
-        return bool(score is not None and score >= 90)
+        return bool(score is not None and score >= PASS_SCORE_THRESHOLD)
 
 
 class OptimizerResult(_Strict):
     optimized_architecture: Dict[str, object]
     changes: List[str] = []
     reason: str = ""
+
+
+def _stringify(v):
+    """Render structured LLM output (dict/list) as readable text for str fields."""
+    if isinstance(v, (dict, list)):
+        return json.dumps(v, ensure_ascii=False)
+    return v
 
 
 class DRArchitecture(_Strict):
@@ -142,9 +160,57 @@ class DRArchitecture(_Strict):
     storage_architecture: str = ""
     compute_architecture: str = ""
     failover_automation: str = ""
-    # Profile-specific blocks (e.g. datacenter_thailand, pdpa_compliance) are
-    # kept verbatim under `profile_data` via extra="allow".
+    site_separation: Optional[str] = Field(
+        default=None,
+        description="Physical separation between primary and DR sites: locations, "
+                    "distance, and datacenter tiers.",
+    )
+    compliance_design: Optional[str] = Field(
+        default=None,
+        description="How the design satisfies data-localization, cross-border-transfer, "
+                    "encryption and retention obligations.",
+    )
+    regulatory_alignment: Optional[str] = Field(
+        default=None,
+        description="Evidence that RTO/RPO targets are met plus annual DR testing "
+                    "and regulator reporting arrangements.",
+    )
     vendor_recommendations: Dict[str, str] = {}
+
+    @field_validator("site_separation", "compliance_design", "regulatory_alignment",
+                     mode="before")
+    @classmethod
+    def _flatten_structured_block(cls, v):
+        # The architecture prompt requests these as JSON objects; accept either
+        # the object form or plain prose by serializing structures to text.
+        if v is None:
+            return None
+        return _stringify(v)
+
+    @field_validator("tier_definitions", mode="before")
+    @classmethod
+    def _normalize_tier_keys(cls, v):
+        """Normalize LLM-emitted tier keys ('p0', 'Tier 0', ' p1 ') to P0-P3.
+
+        Anything outside P0-P3 raises so the validation-retry loop regenerates
+        instead of rules.py silently skipping RTO/RPO checks for unknown keys.
+        """
+        if not isinstance(v, dict):
+            return v
+        normalized: Dict[str, object] = {}  # values validated as TierDefinition after this
+        for key, value in v.items():
+            text = str(key).strip().upper()
+            if text.startswith("TIER"):
+                text = text[4:].strip()
+            if text in {"0", "1", "2", "3"}:
+                text = f"P{text}"
+            if text not in {"P0", "P1", "P2", "P3"}:
+                raise ValueError(
+                    f"tier_definitions keys must be P0-P3 (got {key!r}); "
+                    "rename the tier to one of P0, P1, P2, P3."
+                )
+            normalized[text] = value
+        return normalized
 
 
 class Finding(_Strict):

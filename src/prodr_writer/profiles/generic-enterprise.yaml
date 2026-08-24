@@ -5,12 +5,17 @@ title:
 industry_hint: general
 region: global
 
-regulatory_context: |
-  - Align the design with ISO 22301 (Business Continuity Management Systems) and
-    ISO/IEC 27031 (ICT readiness for business continuity).
-  - Reference NIST SP 800-34 for contingency planning guidance where applicable.
-  - Data protection obligations follow the client's applicable privacy regime
-    (e.g. GDPR or local equivalents); state assumptions explicitly.
+regulatory_context:
+  en: |
+    - Align the design with ISO 22301 (Business Continuity Management Systems) and
+      ISO/IEC 27031 (ICT readiness for business continuity).
+    - Reference NIST SP 800-34 for contingency planning guidance where applicable.
+    - Data protection obligations follow the client's applicable privacy regime
+      (e.g. GDPR or local equivalents); state assumptions explicitly.
+  zh: |
+    - 方案设计须符合 ISO 22301（业务连续性管理体系）和 ISO/IEC 27031（ICT 就绪性）要求。
+    - 适用时参考 NIST SP 800-34 应急规划指南。
+    - 数据保护义务遵循客户适用的隐私法规（如 GDPR 或当地等效法规）；须明确说明相关假设。
 
 constraints:
   P0: { rpo_max_minutes: 0, rto_max_minutes: 30 }

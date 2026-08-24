@@ -12,28 +12,74 @@ from typing import List, Optional
 from .profiles import localized
 from .schemas import BIAReport, DRArchitecture, DRStrategy, Finding, ProjectInput, ValidationReport
 
-_DURATION_RE = re.compile(r"[<>≤>=~\s]*(\d+(?:\.\d+)?)\s*(min(?:ute)?s?|分钟|hours?|小时|h|d|天)?", re.IGNORECASE)
+# Matches the LAST number+unit in a duration expression so range upper bounds win
+# ("1-2 hours" → 2h): the upper bound is the binding promise to the customer.
+_DURATION_RE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(?:-|–|—|to)\s*(\d+(?:\.\d+)?)\s*"
+    r"(?:(?:full|half)\s*)?(min(?:ute)?s?|分钟|hours?|小时|h|days?|d|天)?"
+    r"|(\d+(?:\.\d+)?)\s*"
+    r"(?:(?:full|half)\s*)?(min(?:ute)?s?|分钟|hours?|小时|h|days?|d|天)?",
+    re.IGNORECASE,
+)
 _UNIT_MINUTES = {"min": 1, "mins": 1, "minute": 1, "minutes": 1, "分钟": 1,
                  "h": 60, "hour": 60, "hours": 60, "小时": 60,
-                 "d": 1440, "天": 1440}
+                 "d": 1440, "day": 1440, "days": 1440, "天": 1440}
+
+
+def _unit_minutes(unit: Optional[str]) -> float:
+    text = (unit or "min").lower().strip()
+    # '2 full hours' / '1 full day': the qualifier does not change the unit.
+    text = re.sub(r"^(?:full|half)\s+", "", text)
+    return _UNIT_MINUTES.get(text, 1)
 
 
 def parse_minutes(value: str) -> Optional[float]:
-    """Parse '≤4h', '<30min', '0', '24 hours' → minutes. None when unparseable."""
+    """Parse a human duration expression into minutes; None when unparseable.
+
+    Handles '≤4h', '<30min', '>30min', '>=2 hours', '~1 hour', '0',
+    '24 hours', '1 full day', 'half an hour', and ranges like '1-2 hours'
+    (the upper bound is taken: it is the binding promise).
+    """
     if value is None:
         return None
     text = str(value).strip()
     if not text or text.lower() in ("n/a", "na", "-"):
         return None
+    # Comparison prefixes do not change the value ('>30min' means 30 min or worse).
+    text = re.sub(r"^[><≥≤~=]+\s*", "", text)
+    lowered = text.lower()
+    if lowered in ("half an hour", "half hour"):
+        return 30.0
     match = _DURATION_RE.search(text)
     if not match:
         return None
-    number = float(match.group(1))
-    unit = (match.group(2) or "min").lower()
-    return number * _UNIT_MINUTES.get(unit, 1)
+    lo, hi, range_unit, single, single_unit = match.groups()
+    if hi is not None:
+        # Range expression: take the upper bound.
+        return float(hi) * _unit_minutes(range_unit)
+    return float(single) * _unit_minutes(single_unit)
+
+
+def compute_weighted_score(dimension_scores: dict[str, float], weights: dict[str, float]) -> float:
+    """Weighted mean of dimension scores, scaled to 100. Dimensions absent from weights are ignored; returns 0.0 if nothing overlaps."""
+    total_weight = 0.0
+    weighted_sum = 0.0
+    for key, score in (dimension_scores or {}).items():
+        weight = (weights or {}).get(key)
+        if weight is None:
+            continue
+        try:
+            weighted_sum += float(score) * float(weight)
+            total_weight += float(weight)
+        except (TypeError, ValueError):
+            continue
+    if total_weight <= 0:
+        return 0.0
+    return weighted_sum / total_weight
 
 
 def check_rto_rpo(bia: BIAReport, arch: DRArchitecture, constraints: dict) -> List[Finding]:
+    """Check tier capability against profile limits AND the BIA's stated targets."""
     findings = []
     for tier_key, tier in arch.tier_definitions.items():
         rto = parse_minutes(tier.rto)
@@ -55,32 +101,145 @@ def check_rto_rpo(bia: BIAReport, arch: DRArchitecture, constraints: dict) -> Li
             findings.append(Finding(rule_id="RPO-LIMIT", severity="fatal",
                                     message=f"Tier {tier_key} RPO {tier.rpo} ({rpo:.0f} min) exceeds the "
                                             f"profile limit of {rpo_max} min."))
+
+    # Compare each BIA system's required targets against what its assigned
+    # tier in the architecture can actually deliver.
+    for system in bia.business_systems:
+        tier = arch.tier_definitions.get(system.tier)
+        if tier is None:
+            continue  # missing assignment is reported by check_coverage
+        need_rto = parse_minutes(system.rto)
+        need_rpo = parse_minutes(system.rpo)
+        can_rto = parse_minutes(tier.rto)
+        can_rpo = parse_minutes(tier.rpo)
+        if need_rto is None and str(system.rto or "").strip():
+            findings.append(Finding(rule_id="RTO-PARSE", severity="warning",
+                                    message=f"System '{system.name}': BIA RTO target "
+                                            f"'{system.rto}' is not machine-readable; skipped."))
+        elif need_rto is not None and can_rto is None:
+            findings.append(Finding(rule_id="RTO-PARSE", severity="warning",
+                                    message=f"System '{system.name}' (tier {system.tier}): architecture "
+                                            f"RTO '{tier.rto}' is not machine-readable; cannot verify the "
+                                            f"BIA target of {need_rto:.0f} min."))
+        elif need_rto is not None and can_rto is not None and can_rto > need_rto:
+            findings.append(Finding(rule_id="RTO-LIMIT", severity="fatal",
+                                    message=f"System '{system.name}' needs RTO {system.rto} "
+                                            f"({need_rto:.0f} min) but tier {system.tier} only delivers "
+                                            f"{tier.rto} ({can_rto:.0f} min)."))
+        if need_rpo is None and str(system.rpo or "").strip():
+            findings.append(Finding(rule_id="RPO-PARSE", severity="warning",
+                                    message=f"System '{system.name}': BIA RPO target "
+                                            f"'{system.rpo}' is not machine-readable; skipped."))
+        elif need_rpo is not None and can_rpo is None:
+            findings.append(Finding(rule_id="RPO-PARSE", severity="warning",
+                                    message=f"System '{system.name}' (tier {system.tier}): architecture "
+                                            f"RPO '{tier.rpo}' is not machine-readable; cannot verify the "
+                                            f"BIA target of {need_rpo:.0f} min."))
+        elif need_rpo is not None and can_rpo is not None and can_rpo > need_rpo:
+            findings.append(Finding(rule_id="RPO-LIMIT", severity="fatal",
+                                    message=f"System '{system.name}' needs RPO {system.rpo} "
+                                            f"({need_rpo:.0f} min) but tier {system.tier} only delivers "
+                                            f"{tier.rpo} ({can_rpo:.0f} min)."))
     return findings
+
+
+_PUNCT_RE = re.compile(r"[^\w一-鿿]+", re.UNICODE)
+
+
+def _normalize_name(name: str) -> str:
+    """Normalize a system name for fuzzy cross-document matching.
+
+    Casefold, strip punctuation and collapse whitespace so 'Core-Banking '
+    matches 'core banking'. Chinese names keep their characters (\\u4e00-\\u9fff).
+    """
+    return _PUNCT_RE.sub(" ", str(name).casefold()).strip()
+
+
+def _names_match(candidate: str, assigned_names: set[str]) -> bool:
+    """True when a normalized name matches, or one normalized name contains the other.
+
+    Heuristic: LLMs routinely shorten names ('CRM System' → 'CRM'); containment
+    after normalization treats those as covered. Remaining limitation: generic
+    single-word names ('System') could over-match longer names.
+    """
+    norm = _normalize_name(candidate)
+    if not norm:
+        return True  # nothing to match on; do not flag empty names
+    for other in assigned_names:
+        if norm == other or norm in other or other in norm:
+            return True
+    return False
 
 
 def check_coverage(bia: BIAReport, arch: DRArchitecture) -> List[Finding]:
     findings = []
-    assigned = set()
-    for tier in arch.tier_definitions.values():
-        assigned.update(tier.systems)
+    assigned_raw = []
+    for tier_key, tier in arch.tier_definitions.items():
+        assigned_raw.extend(tier.systems)
+    # Normalize once; both sides come from independent LLM outputs whose
+    # exact strings rarely agree.
+    assigned = {_normalize_name(name) for name in assigned_raw}
     for system in bia.business_systems:
-        if system.name not in assigned:
+        if not _names_match(system.name, assigned):
             findings.append(Finding(rule_id="COVERAGE", severity="major",
                                     message=f"Business system '{system.name}' (tier {system.tier}) is not "
                                             f"assigned to any tier in the architecture."))
     return findings
 
 
+# Forbidden backup/restore-family terms with a small synonym set each,
+# matched on word boundaries so substrings inside unrelated words no longer
+# trigger the check.
+_FORBIDDEN_P0_TERMS = {
+    "backup": ["backups", "back-up", "back-ups"],
+    "restore": ["restoring", "restored", "restoration"],
+    "备份": [],
+    "恢复": [],
+}
+
+
+def _forbidden_p0_pattern() -> re.Pattern:
+    """Word-boundary regex for ASCII terms; CJK terms have no word boundaries."""
+    parts = []
+    for term, synonyms in _FORBIDDEN_P0_TERMS.items():
+        if term.isascii():
+            parts.append(rf"\b(?:{term}|{'|'.join(synonyms)})\b" if synonyms else rf"\b{term}\b")
+        else:
+            parts.append(re.escape(term))
+    return re.compile("|".join(parts), re.IGNORECASE)
+
+
+_FORBIDDEN_P0_RE = _forbidden_p0_pattern()
+
+
+# Negation cues that flip a hit into a non-finding ("no backup window",
+# "without restore points", "无需备份"). Checked in the ~20 chars before a match.
+_NEGATION_RE = re.compile(r"(?:\b(?:no|not|without|non|avoid\w*)\b|[无非避免不需禁])\s*$", re.IGNORECASE)
+
+
 def check_p0_strategy(arch: DRArchitecture, strategy: DRStrategy) -> List[Finding]:
+    """Reject backup/restore as the P0 primary protection strategy.
+
+    Lexical, boundary-aware matching only, with a narrow negation window
+    ("no backup window needed" is not a violation). Semantic paraphrases that
+    avoid the backup/restore vocabulary entirely cannot be caught here.
+    """
     findings = []
-    forbidden = ("backup", "restore", "备份", "恢复")
+
+    def forbidden_hit(text: str) -> bool:
+        for m in _FORBIDDEN_P0_RE.finditer(text or ""):
+            prefix = text[max(0, m.start() - 20):m.start()]
+            if not _NEGATION_RE.search(prefix):
+                return True
+        return False
+
     p0 = arch.tier_definitions.get("P0")
-    if p0 and any(word in (p0.recovery_strategy or "").lower() for word in forbidden):
+    if p0 and forbidden_hit(p0.recovery_strategy):
         findings.append(Finding(rule_id="P0-STRATEGY", severity="fatal",
                                 message="P0 tier uses backup/restore as its recovery strategy; "
                                         "synchronous replication is required (RPO=0)."))
     for tier in strategy.protection_tiers:
-        if tier.tier == "P0" and any(word in tier.protection_mode.lower() for word in forbidden):
+        if tier.tier == "P0" and forbidden_hit(tier.protection_mode):
             findings.append(Finding(rule_id="P0-STRATEGY", severity="fatal",
                                     message=f"P0 protection mode '{tier.protection_mode}' violates the "
                                             f"no-backup-as-primary constraint."))

@@ -102,14 +102,20 @@ class Pipeline:
 
         console.print(f"[bold]Run directory:[/bold] {run_dir}")
 
-        bia = self._stage(run_dir, "bia", "BIA analysis", 1,
-                          lambda: self._bia(inputs))
-        state = self._stage(run_dir, "current_state", "current state assessment", 2,
-                            lambda: self._current_state(inputs))
-        strategy = self._stage(run_dir, "strategy", "DR strategy", 3,
-                               lambda: self._strategy(inputs, bia, state))
-        architecture, review, rounds = self._review_loop(inputs, bia, state, strategy, run_dir)
-        validation = validate_run(inputs, bia, strategy, architecture, self.profile)
+        try:
+            bia = self._stage(run_dir, "bia", "BIA analysis", 1,
+                              lambda: self._bia(inputs))
+            state = self._stage(run_dir, "current_state", "current state assessment", 2,
+                                lambda: self._current_state(inputs))
+            strategy = self._stage(run_dir, "strategy", "DR strategy", 3,
+                                   lambda: self._strategy(inputs, bia, state))
+            architecture, review, rounds = self._review_loop(inputs, bia, state, strategy, run_dir)
+            validation = validate_run(inputs, bia, strategy, architecture, self.profile)
+        except Exception as exc:
+            # Persist the failure so the run shows up in history with what
+            # went wrong — previously a failed run left no trace at all.
+            self._write_error_run(run_dir, inputs, exc)
+            raise
 
         artifacts = {
             "input": inputs.model_dump(),
@@ -142,6 +148,20 @@ class Pipeline:
         }
 
     # ------------------------------------------------------------------
+    def _write_error_run(self, run_dir: Path, inputs: ProjectInput,
+                         exc: Exception) -> None:
+        """Leave a run.json behind so failed runs appear in history."""
+        try:
+            (run_dir / "run.json").write_text(json.dumps({
+                "input": inputs.model_dump(),
+                "profile": self.cfg.profile,
+                "language": self.cfg.language,
+                "status": "error",
+                "error": f"{type(exc).__name__}: {exc}",
+            }, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError:
+            pass  # best effort — the exception to the caller matters more
+
     @staticmethod
     def _inputs_fingerprint(inputs: ProjectInput, profile: str) -> str:
         """Stable hash over everything that changes the generated content."""
@@ -247,15 +267,15 @@ class Pipeline:
 
     def _bia(self, inputs: ProjectInput) -> BIAReport:
         return run_stage(self.analyst, prompts.bia_prompt(inputs.model_dump(), self.cfg.language),
-                         "JSON BIA report", BIAReport, "bia")
+                         "JSON BIA report", BIAReport, "bia", notify=self.notify)
 
     def _current_state(self, inputs: ProjectInput) -> CurrentStateReport:
         return run_stage(self.analyst, prompts.current_state_prompt(inputs.model_dump(), self.cfg.language),
-                         "JSON current state assessment", CurrentStateReport, "current_state")
+                         "JSON current state assessment", CurrentStateReport, "current_state", notify=self.notify)
 
     def _strategy(self, inputs: ProjectInput, bia: BIAReport, state: CurrentStateReport) -> DRStrategy:
         return run_stage(self.architect, prompts.strategy_prompt(inputs.model_dump(), bia, state, self.cfg.language),
-                         "JSON DR strategy", DRStrategy, "strategy")
+                         "JSON DR strategy", DRStrategy, "strategy", notify=self.notify)
 
     def _scoring_weights(self) -> Dict[str, float]:
         """Per-dimension weights from the profile (explicit scoring.weights first)."""
@@ -298,7 +318,7 @@ class Pipeline:
         arch: DRArchitecture = self._run_or_resume(run_dir, "architecture", lambda: run_stage(
             self.architect,
             prompts.architecture_prompt(inputs.model_dump(), bia, state, strategy, self.profile, self.cfg.language),
-            "JSON DR architecture", DRArchitecture, "architecture",
+            "JSON DR architecture", DRArchitecture, "architecture", notify=self.notify,
         ))
         review: Optional[ReviewResult] = None
         rounds = 0
@@ -308,7 +328,7 @@ class Pipeline:
             review = self._recompute_score(self._run_or_resume(run_dir, f"review-{round_num}", lambda: run_stage(
                 self.critic,
                 prompts.critic_prompt(inputs.model_dump(), bia, strategy, arch, self.profile, self.cfg.language),
-                "JSON review result", ReviewResult, f"review-{round_num}",
+                "JSON review result", ReviewResult, f"review-{round_num}", notify=self.notify,
             )))
             console.print(f"  → score [bold]{review.score}[/bold]/100 "
                           + ("[green]passed[/green]" if review.can_proceed else "[yellow]needs optimization[/yellow]"))
@@ -321,7 +341,7 @@ class Pipeline:
             optimized: OptimizerResult = self._run_or_resume(run_dir, f"optimize-{round_num}", lambda: run_stage(
                 self.optimizer,
                 prompts.optimizer_prompt(arch, review, self.profile, self.cfg.language),
-                "JSON optimization result", OptimizerResult, f"optimize-{round_num}",
+                "JSON optimization result", OptimizerResult, f"optimize-{round_num}", notify=self.notify,
             ))
             arch = DRArchitecture.model_validate(optimized.optimized_architecture)  # fed into next round
             # Persist immediately so a crash mid-round loses nothing.

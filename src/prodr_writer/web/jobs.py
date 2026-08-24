@@ -172,6 +172,17 @@ class JobManager:
         with self._lock:
             return self._jobs.get(job_id)
 
+    def list(self, limit: int = 50) -> List[Job]:
+        """Jobs for the /api/jobs listing: active first (oldest first, so the
+        longest-waiting job leads), then finished newest-first."""
+        with self._lock:
+            jobs = list(self._jobs.values())
+        active = sorted((j for j in jobs if j.status in self.ACTIVE_STATUSES),
+                        key=lambda j: j.created_at)
+        finished = sorted((j for j in jobs if j.status not in self.ACTIVE_STATUSES),
+                          key=lambda j: j.created_at, reverse=True)
+        return (active + finished)[:max(1, limit)]
+
     def was_evicted(self, job_id: str) -> bool:
         """True if this id belonged to a job we evicted (=> HTTP 410 for pollers)."""
         with self._lock:

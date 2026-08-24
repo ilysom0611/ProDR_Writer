@@ -130,6 +130,9 @@ function showStatus(text, kind) {
 
 // ---------- generation ----------
 const STAGES = ["bia", "current_state", "strategy", "architecture", "optimizer", "document"];
+// Survives page refreshes: as long as the job is pending/running we remember
+// it here and reattach the progress stream on load.
+const ACTIVE_JOB_KEY = "prodr_active_job";
 
 function renderStages() {
   const ol = $("#stage-list");
@@ -186,15 +189,57 @@ function openEventStream(jobId, onEvent, onLost) {
   return es;
 }
 
-async function startJob(endpoint, payload, title) {
+function showProgressCard(title) {
   renderStages();
   $("#progress-card").classList.remove("hidden");
   $("#result-box").classList.add("hidden");
   $("#error-box").classList.add("hidden");
   $("#review-note").classList.add("hidden");
-  $("#job-project").textContent = `— ${title}`;
+  $("#job-project").textContent = title ? `— ${title}` : "";
   $("#btn-generate").disabled = true;
   $("#btn-demo").disabled = true;
+}
+
+// Shared SSE handler: used both right after POSTing a new job and when
+// reattaching to a job after a page refresh. The server replays all stored
+// events from position 0, so a reattached client rebuilds the full picture.
+function attachJobStream(jobId) {
+  openEventStream(jobId, (event, es) => {
+    if (event.type === "stage") {
+      setStage(event.stage, event.status, event.label);
+    } else if (event.type === "retry") {
+      const note = $("#review-note");
+      note.textContent = `⚠ ${event.stage}: ${event.reason} (LLM retries automatically, up to 3 attempts)` ;
+      note.classList.remove("hidden");
+    } else if (event.type === "review") {
+      const note = $("#review-note");
+      note.textContent = `Review round ${event.round}: score ${event.score}/100 — ${event.passed ? "passed ✓" : "optimizing…"}`;
+      note.classList.remove("hidden");
+    } else if (event.type === "done" || event.type === "success") {
+      es.close();
+      localStorage.removeItem(ACTIVE_JOB_KEY);
+      showResult(event.summary);
+      resetButtons();
+    } else if (event.type === "cancelled") {
+      es.close();
+      localStorage.removeItem(ACTIVE_JOB_KEY);
+      showError("Generation cancelled.");
+      resetButtons();
+    } else if (event.type === "error") {
+      es.close();
+      localStorage.removeItem(ACTIVE_JOB_KEY);
+      showError(event.error || "Generation failed");
+      resetButtons();
+    }
+  }, (message) => {
+    localStorage.removeItem(ACTIVE_JOB_KEY);
+    showError(message);
+    resetButtons();
+  });
+}
+
+async function startJob(endpoint, payload, title) {
+  showProgressCard(title);
 
   let jobId;
   try {
@@ -209,31 +254,39 @@ async function startJob(endpoint, payload, title) {
     resetButtons();
     return;
   }
+  localStorage.setItem(ACTIVE_JOB_KEY, jobId);
+  attachJobStream(jobId);
+}
 
-  openEventStream(jobId, (event, es) => {
-    if (event.type === "stage") {
-      setStage(event.stage, event.status, event.label);
-    } else if (event.type === "review") {
-      const note = $("#review-note");
-      note.textContent = `Review round ${event.round}: score ${event.score}/100 — ${event.passed ? "passed ✓" : "optimizing…"}`;
-      note.classList.remove("hidden");
-    } else if (event.type === "done" || event.type === "success") {
-      es.close();
-      showResult(event.summary);
+// After a refresh the in-progress job is picked up again: pending/running
+// jobs resume streaming; finished ones surface their result or error.
+async function resumeActiveJob() {
+  const jobId = localStorage.getItem(ACTIVE_JOB_KEY);
+  if (!jobId) return;
+  let job;
+  try {
+    job = await api(`/api/jobs/${jobId}`);
+  } catch (e) {
+    localStorage.removeItem(ACTIVE_JOB_KEY); // unknown/expired — forget it
+    return;
+  }
+  if (["done", "error", "cancelled"].includes(job.status)) {
+    localStorage.removeItem(ACTIVE_JOB_KEY);
+    showProgressCard(job.project_name);
+    if (job.status === "done") {
+      STAGES.forEach((s) => setStage(s, "done"));
+      showResult(job.summary);
+    } else if (job.status === "error") {
+      showError(job.error || "Generation failed");
       resetButtons();
-    } else if (event.type === "cancelled") {
-      es.close();
+    } else {
       showError("Generation cancelled.");
       resetButtons();
-    } else if (event.type === "error") {
-      es.close();
-      showError(event.error || "Generation failed");
-      resetButtons();
     }
-  }, (message) => {
-    showError(message);
-    resetButtons();
-  });
+    return;
+  }
+  showProgressCard(job.project_name);
+  attachJobStream(jobId);
 }
 
 function showResult(summary) {
@@ -303,7 +356,10 @@ async function loadHistory() {
       });
 
       const scoreTd = document.createElement("td");
-      if (run.status === "demo") scoreTd.appendChild(badgeEl("demo", "ok"));
+      if (run.status === "error") {
+        tr.title = run.error || "Run failed";
+        scoreTd.appendChild(badgeEl("failed", "err"));
+      } else if (run.status === "demo") scoreTd.appendChild(badgeEl("demo", "ok"));
       else if (run.score != null) scoreTd.appendChild(badgeEl(`score ${run.score}`, "ok"));
       else scoreTd.appendChild(badgeEl("legacy", "warn"));
       tr.appendChild(scoreTd);
@@ -331,3 +387,4 @@ async function loadHistory() {
 
 loadMeta();
 loadHistory();
+resumeActiveJob();

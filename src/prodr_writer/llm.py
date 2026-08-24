@@ -127,6 +127,7 @@ def run_stage(
     schema: Type[T],
     stage_name: str,
     max_retries: int = 2,
+    notify=None,
 ) -> T:
     """Run a single-agent Crew and validate its JSON against `schema`.
 
@@ -135,7 +136,15 @@ def run_stage(
     Transient API/network errors from kickoff() are also retried with
     exponential backoff; authentication failures re-raise immediately since
     retrying with the same credentials cannot succeed.
+
+    `notify` (optional) receives {"type": "retry", ...} events so web UIs can
+    show that a stage is being retried rather than silently hanging.
     """
+
+    def _announce(reason: str) -> None:
+        if notify:
+            notify({"type": "retry", "stage": stage_name, "reason": reason})
+
     error_feedback = ""
     for attempt in range(1, max_retries + 2):
         desc = description + error_feedback
@@ -149,6 +158,7 @@ def run_stage(
                 f"[yellow]  [{stage_name}] attempt {attempt}: {type(exc).__name__} "
                 f"from provider, retrying...[/yellow]"
             )
+            _announce(f"{type(exc).__name__} from provider — retrying")
             if attempt > max_retries:
                 raise RuntimeError(
                     f"Stage '{stage_name}' failed after {max_retries + 1} attempts "
@@ -165,6 +175,7 @@ def run_stage(
                 f"[yellow]  [{stage_name}] attempt {attempt}: invalid output "
                 f"({type(exc).__name__}), retrying with feedback...[/yellow]"
             )
+            _announce("invalid model output — retrying with feedback")
             error_feedback = (
                 "\n\n### IMPORTANT: your previous output was invalid.\n"
                 f"Error:\n{str(exc)[:1500]}\n"

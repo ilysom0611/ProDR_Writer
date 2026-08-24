@@ -297,6 +297,17 @@ def create_app(host: Optional[str] = None) -> FastAPI:
         return {"job_id": job.id}
 
     # -- jobs / progress / history --------------------------------------------
+    @app.get("/api/jobs")
+    def list_jobs(limit: int = 20):
+        """Job listing so a refreshed browser can find its running job again."""
+        limit = max(1, min(limit, 100))
+        return {"jobs": [
+            {"id": j.id, "kind": j.kind, "project_name": j.project_name,
+             "status": j.status, "created_at": j.created_at,
+             "error": j.error if j.status == "error" else ""}
+            for j in _manager.list(limit)
+        ]}
+
     @app.get("/api/jobs/{job_id}/events")
     async def events(job_id: str, request: Request):
         job = _manager.get(job_id)
@@ -385,6 +396,7 @@ def create_app(host: Optional[str] = None) -> FastAPI:
                         data = json.loads(run_json.read_text(encoding="utf-8"))
                         entry.update({
                             "status": data.get("status", "success"),
+                            "error": (data.get("error") or "")[:300],
                             "project_name": data.get("input", {}).get("project_name"),
                             "language": data.get("language"),
                             "score": (data.get("review") or {}).get("score"),

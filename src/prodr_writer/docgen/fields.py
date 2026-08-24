@@ -45,10 +45,12 @@ def add_field(paragraph: Paragraph, instruction: str, placeholder: str = "") -> 
 
 
 def add_page_number(paragraph: Paragraph, before: str = "", after: str = "") -> None:
-    """Insert 'Page N of M' fields into a footer paragraph."""
+    """Insert 'Page N of M' fields (PAGE + NUMPAGES) into a footer paragraph."""
     if before:
         paragraph.add_run(before)
     add_field(paragraph, r" PAGE \* MERGEFORMAT ", "1")
+    paragraph.add_run(" / ")
+    add_field(paragraph, r" NUMPAGES \* MERGEFORMAT ", "1")
     if after:
         paragraph.add_run(after)
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER

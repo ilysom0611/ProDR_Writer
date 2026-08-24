@@ -86,6 +86,14 @@ labels:
   definition: "Definition"
   vendor_recommendations: "Vendor recommendations"
   compliance_design: "Compliance design elements"
+  # Schema keys rendered as headings/table labels by docgen/builder.py.
+  # Vendor-specific and compliance sub-keys are intentionally not enumerated;
+  # they fall back to the capitalized snake_case form.
+  network_architecture: "Network Architecture"
+  storage_architecture: "Storage Architecture"
+  compute_architecture: "Compute Architecture"
+  failover_automation: "Failover Automation"
+  summary: "Summary"
 
 severity_names:
   fatal: "Fatal"

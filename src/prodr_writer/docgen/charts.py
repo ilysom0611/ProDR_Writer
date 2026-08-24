@@ -6,6 +6,7 @@ language, and raise loudly on failure so missing figures are visible.
 """
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Dict
 
@@ -27,10 +28,15 @@ def _setup_style(language: str) -> None:
         installed = {f.name for f in font_manager.fontManager.ttflist}
         chosen = next((name for name in _CJK_FONTS if name in installed), None)
         if chosen is None:
-            raise RuntimeError(
-                "No CJK font found for Chinese chart labels; install e.g. 'Noto Sans CJK SC'."
+            # A chart rendered with a fallback font beats a missing chart: warn
+            # instead of raising (builder.py's try/except stays as the final net).
+            warnings.warn(
+                "No CJK font found; Chinese chart labels may render as boxes. "
+                "Install e.g. 'Noto Sans CJK SC' or 'Microsoft YaHei' for correct rendering.",
+                stacklevel=2,
             )
-        plt.rcParams["font.family"] = [chosen, "DejaVu Sans"]
+        else:
+            plt.rcParams["font.family"] = [chosen, "DejaVu Sans"]
         plt.rcParams["axes.unicode_minus"] = False
     else:
         plt.rcParams["font.family"] = "DejaVu Sans"

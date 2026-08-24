@@ -58,3 +58,29 @@ def test_page_field_present(tmp_path: Path):
         footer_xmls = [zf.read(n) for n in zf.namelist() if "footer" in n]
     assert b"TOC" in document_xml and b"instrText" in document_xml
     assert any(b"PAGE" in xml and b"instrText" in xml for xml in footer_xmls)
+
+
+def test_labeled_table_creates_single_table():
+    """Regression: labeled_table used to call add_table twice per invocation."""
+    from docx import Document
+
+    from prodr_writer.docgen.builder import Builder
+
+    doc = Document()
+    builder = Builder(doc, {"labels": {}}, "en")
+    builder.labeled_table("Demo caption", ["A", "B"], [["1", "2"]])
+    assert len(doc.tables) == 1
+
+
+def test_numpages_field_in_footer(tmp_path: Path):
+    """'Page N of M' needs both PAGE and NUMPAGES fields."""
+    import zipfile
+
+    from prodr_writer.docgen.builder import build_document
+
+    run = dict(_load_run())
+    run["language"] = "en"
+    out = build_document(run, tmp_path)
+    with zipfile.ZipFile(out) as zf:
+        footer_xmls = [zf.read(n) for n in zf.namelist() if "footer" in n]
+    assert any(b"NUMPAGES" in xml for xml in footer_xmls)

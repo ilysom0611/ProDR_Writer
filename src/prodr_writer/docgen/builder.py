@@ -25,6 +25,18 @@ ACCENT = RGBColor(0x1F, 0x4E, 0x79)   # dark blue for headings
 HEADER_BG = "1F4E79"
 
 
+def _schema_label(labels: Dict, key: str) -> str:
+    """Human label for a snake_case schema key, localized via resource labels.
+
+    Keys not covered by the resources' `labels:` mapping (e.g. LLM-provided
+    vendor/compliance sub-keys) fall back to the capitalized snake_case form.
+    """
+    localized_label = labels.get(key)
+    if localized_label:
+        return str(localized_label)
+    return key.replace("_", " ").capitalize()
+
+
 def _load_resources(language: str) -> Dict:
     path = Path(__file__).parent.parent / "resources" / f"{language}.yaml"
     if not path.exists():
@@ -106,9 +118,6 @@ class Builder:
             cap.paragraph_format.keep_with_next = True
             cap.add_run(f"Table {self.tab_no}: ").bold = True
             cap.add_run(caption_text)
-        table = self.doc.add_table(rows=1, cols=len(headers))
-        table.style = "Light Grid Accent 1"
-        table.alignment = WD_TABLE_ALIGNMENT.CENTER
         table = self.doc.add_table(rows=1, cols=len(headers))
         table.style = "Light Grid Accent 1"
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -276,7 +285,7 @@ def build_document(run: dict, run_dir: Path) -> Path:
     infra = state.get("current_infrastructure", {})
     for area_key, value in infra.items():
         if value:
-            b.heading(area_key.replace("_", " ").capitalize(), 3)
+            b.heading(_schema_label(labels, area_key), 3)
             b.para(value)
     gap_rows = [[g.get("area", ""), g.get("current_capability", ""),
                  g.get("required_capability", ""), g.get("gap", ""),
@@ -319,13 +328,13 @@ def build_document(run: dict, run_dir: Path) -> Path:
     for key in ("network_architecture", "storage_architecture",
                 "compute_architecture", "failover_automation"):
         if arch.get(key):
-            b.heading(key.replace("_", " ").capitalize(), 2)
+            b.heading(_schema_label(labels, key), 2)
             b.para(arch[key])
     vendors = arch.get("vendor_recommendations", {}) or {}
     if vendors:
         b.labeled_table(labels["vendor_recommendations"],
                         [labels["layer"], labels["recommendation"]],
-                        [[k.replace("_", " ").capitalize(), v] for k, v in vendors.items() if v])
+                        [[_schema_label(labels, k), v] for k, v in vendors.items() if v])
     try:
         fig2 = run_dir / "chart_topology.png"
         topology_diagram(_dict_to_arch(arch), fig2, res["charts"], language)
@@ -350,7 +359,7 @@ def build_document(run: dict, run_dir: Path) -> Path:
     if any(compliance_design.values()):
         b.labeled_table(labels["compliance_design"],
                         [labels["aspect"], labels["design"]],
-                        [[k.replace("_", " ").capitalize(), v] for k, v in compliance_design.items() if v])
+                        [[_schema_label(labels, k), v] for k, v in compliance_design.items() if v])
 
     # -- 8. Roadmap ------------------------------------------------------------
     b.heading(chapters["roadmap"], 1)

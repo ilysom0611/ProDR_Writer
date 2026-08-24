@@ -85,6 +85,12 @@ labels:
   definition: "定义"
   vendor_recommendations: "厂商选型建议"
   compliance_design: "合规设计要点"
+  # 文档生成器中作为标题/表头渲染的模型键
+  network_architecture: "网络架构"
+  storage_architecture: "存储架构"
+  compute_architecture: "计算架构"
+  failover_automation: "切换自动化"
+  summary: "概述"
 
 severity_names:
   fatal: "致命"

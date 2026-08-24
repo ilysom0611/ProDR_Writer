@@ -144,8 +144,11 @@ class AppConfig:
 
 def test_connection(cfg: AppConfig) -> tuple[bool, str]:
     """Minimal chat round-trip against the configured OpenAI-compatible endpoint."""
-    if cfg.llm.missing():
-        return False, f"Incomplete LLM configuration, missing: {', '.join(cfg.missing())}"
+    missing = [name for name, value in (
+        ("base_url", cfg.llm.base_url), ("api_key", cfg.llm.api_key), ("model", cfg.llm.model),
+    ) if not value]
+    if missing:
+        return False, f"Incomplete LLM configuration, missing: {', '.join(missing)}"
     try:
         import litellm
 

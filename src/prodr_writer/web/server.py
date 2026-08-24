@@ -48,6 +48,18 @@ def _is_loopback(host: str) -> bool:
     return host in ("localhost", "::1") or host.startswith("127.")
 
 
+class ConfigPayload(BaseModel):
+    """Body of POST /api/config. Must live at MODULE level: a function-local
+    class cannot be resolved from the endpoint's string annotation, and
+    FastAPI then degrades it to a query parameter (every save returned 422)."""
+    base_url: str = ""
+    api_key: Optional[str] = None  # None = keep existing
+    model: str = ""
+    temperature: float = 0.3
+    language: str = "en"
+    profile: str = "generic-enterprise"
+
+
 class _BearerTokenMiddleware(BaseHTTPMiddleware):
     """Require `Authorization: Bearer <token>` on every /api/* route.
 
@@ -163,23 +175,27 @@ def create_app(host: Optional[str] = None) -> FastAPI:
         app.add_middleware(_BearerTokenMiddleware, token=token)
 
     # -- static ---------------------------------------------------------
-    @app.get("/")
-    def index():
-        return FileResponse(STATIC_DIR / "index.html")
-
     from fastapi.staticfiles import StaticFiles
 
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    class _NoCacheStatic(StaticFiles):
+        """Serve UI assets with no-cache: a stale cached app.js posting an
+        outdated payload shape shows up as confusing 422s after upgrades."""
+
+        def file_response(self, *args, **kwargs):
+            response = super().file_response(*args, **kwargs)
+            response.headers["Cache-Control"] = "no-cache"
+            return response
+
+    index_response = FileResponse(STATIC_DIR / "index.html")
+    index_response.headers["Cache-Control"] = "no-cache"
+
+    @app.get("/")
+    def index():
+        return index_response
+
+    app.mount("/static", _NoCacheStatic(directory=str(STATIC_DIR)), name="static")
 
     # -- config -----------------------------------------------------------
-    class ConfigPayload(BaseModel):
-        base_url: str = ""
-        api_key: Optional[str] = None  # None = keep existing
-        model: str = ""
-        temperature: float = 0.3
-        language: str = "en"
-        profile: str = "generic-enterprise"
-
     @app.get("/api/config")
     def get_config():
         cfg = AppConfig.load()
@@ -211,6 +227,12 @@ def create_app(host: Optional[str] = None) -> FastAPI:
     @app.post("/api/config/test")
     def test_config():
         cfg = AppConfig.load()
+        if not cfg.llm.is_complete():
+            # Missing fields are our own message, not a provider error —
+            # pass them through verbatim (classification would turn
+            # "missing: base_url, api_key" into a meaningless "Request failed").
+            _, message = test_connection(cfg)
+            return {"ok": False, "message": message}
         ok, message = test_connection(cfg)
         if ok:
             return {"ok": True, "message": message}

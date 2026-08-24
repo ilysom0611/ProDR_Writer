@@ -14,6 +14,12 @@ const STAGE_LABELS = {
 // ---------- auth token (only needed for non-loopback deployments) ----------
 function getToken() { return sessionStorage.getItem("prodr_token") || ""; }
 function setToken(t) { sessionStorage.setItem("prodr_token", String(t || "").trim()); }
+// start.sh/start.bat print the LAN URL with ?token=... appended; pick it up
+// once so the user isn't prompted on first use.
+(() => {
+  const q = new URLSearchParams(window.location.search).get("token");
+  if (q && !getToken()) setToken(q);
+})();
 
 // ---------- tabs ----------
 document.querySelectorAll(".tab").forEach((btn) => {

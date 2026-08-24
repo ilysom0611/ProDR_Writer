@@ -38,3 +38,8 @@ crew_log.txt
 .env
 .env.local
 config.local.yaml
+
+# runtime artifacts
+.web.pid
+.web-token
+prodr-web.log

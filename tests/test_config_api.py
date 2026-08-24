@@ -64,3 +64,16 @@ def test_index_and_static_no_cache(monkeypatch, tmp_path):
     res = client.get("/static/app.js")
     assert res.status_code == 200
     assert res.headers["cache-control"] == "no-cache"
+
+
+def test_generate_endpoint_accepts_json_body(monkeypatch, tmp_path):
+    """POST /api/generate must parse its JSON body — GeneratePayload used to
+    be function-local and FastAPI degraded it to a query param (all
+    generates returned 422). Incomplete LLM config is fine here: we only
+    assert the payload is understood (400, not 422)."""
+    client = _client(monkeypatch, tmp_path)
+    res = client.post("/api/generate", json={
+        "project_name": "Test Bank DR",
+        "client_name": "ACME",
+        "language": "en", "profile": "generic-enterprise"})
+    assert res.status_code == 400, res.text  # 400 = config check; 422 would be the old bug

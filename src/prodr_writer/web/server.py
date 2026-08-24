@@ -60,6 +60,21 @@ class ConfigPayload(BaseModel):
     profile: str = "generic-enterprise"
 
 
+class GeneratePayload(BaseModel):
+    """Body of POST /api/generate. Module level for the same reason as
+    ConfigPayload: function-local classes break FastAPI's annotation
+    resolution (every generate returned 422)."""
+    project_name: str
+    client_name: str = ""
+    vendor_name: str = ""
+    industry: str = "general"
+    overall_rto: str = "< 4 hours"
+    overall_rpo: str = "< 1 hour"
+    budget: str = ""
+    language: str = "en"
+    profile: str = "generic-enterprise"
+
+
 class _BearerTokenMiddleware(BaseHTTPMiddleware):
     """Require `Authorization: Bearer <token>` on every /api/* route.
 
@@ -247,17 +262,6 @@ def create_app(host: Optional[str] = None) -> FastAPI:
                                "government", "telecom", "manufacturing", "retail", "energy"]}
 
     # -- generation --------------------------------------------------------
-    class GeneratePayload(BaseModel):
-        project_name: str
-        client_name: str = ""
-        vendor_name: str = ""
-        industry: str = "general"
-        overall_rto: str = "< 4 hours"
-        overall_rpo: str = "< 1 hour"
-        budget: str = ""
-        language: str = "en"
-        profile: str = "generic-enterprise"
-
     def _create_job(kind: str, project_name: str) -> dict:
         try:
             job = _manager.create(kind, project_name)

@@ -11,6 +11,10 @@ const STAGE_LABELS = {
   document: "Document build",
 };
 
+// ---------- auth token (only needed for non-loopback deployments) ----------
+function getToken() { return sessionStorage.getItem("prodr_token") || ""; }
+function setToken(t) { sessionStorage.setItem("prodr_token", String(t || "").trim()); }
+
 // ---------- tabs ----------
 document.querySelectorAll(".tab").forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -30,8 +34,21 @@ function toast(msg, kind = "") {
   el._t = setTimeout(() => el.classList.add("hidden"), 3500);
 }
 
-async function api(path, opts) {
-  const res = await fetch(path, opts);
+async function api(path, opts = {}) {
+  const headers = Object.assign({}, opts.headers);
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  let res = await fetch(path, Object.assign({}, opts, { headers }));
+  if (res.status === 401) {
+    // Non-loopback servers require PRODR_WEB_TOKEN; ask once and retry.
+    const t = window.prompt("This server requires an API token (PRODR_WEB_TOKEN):");
+    if (t != null && t.trim()) {
+      setToken(t);
+      const retryHeaders = Object.assign({}, opts.headers);
+      retryHeaders.Authorization = `Bearer ${getToken()}`;
+      res = await fetch(path, Object.assign({}, opts, { headers: retryHeaders }));
+    }
+  }
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.detail || `${res.status} ${res.statusText}`);
   return body;
@@ -92,7 +109,8 @@ $("#btn-test").addEventListener("click", async () => {
   btn.disabled = true; btn.textContent = "Testing…";
   try {
     const r = await api("/api/config/test", { method: "POST" });
-    showStatus(r.message, r.ok ? "ok" : "err");
+    showStatus(r.ok ? r.message : (r.detail ? `${r.message}: ${r.detail}` : r.message),
+               r.ok ? "ok" : "err");
   } catch (e) { showStatus(e.message, "err"); }
   finally { btn.disabled = false; btn.textContent = "🔌 Test connection"; }
 });
@@ -113,7 +131,12 @@ function renderStages() {
   STAGES.forEach((key) => {
     const li = document.createElement("li");
     li.dataset.stage = key;
-    li.innerHTML = `<span class="dot"></span><span>${STAGE_LABELS[key]}</span>`;
+    // STAGE_LABELS are static constants, not server data — safe to build here.
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    const label = document.createElement("span");
+    label.textContent = STAGE_LABELS[key];
+    li.append(dot, label);
     ol.appendChild(li);
   });
 }
@@ -137,6 +160,25 @@ $("#btn-demo").addEventListener("click", () => {
   const profile = $("#gen-form").profile.value;
   startJob("/api/demo", { language: lang, profile }, "Demo proposal");
 });
+
+// EventSource cannot send headers, so the token rides in the query string
+// (the server accepts both). Close after repeated failures instead of
+// retrying forever against a restarted/dead server.
+function openEventStream(jobId, onEvent, onLost) {
+  const token = getToken();
+  const url = `/api/jobs/${jobId}/events${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+  const es = new EventSource(url);
+  let failures = 0;
+  es.onmessage = (msg) => { failures = 0; onEvent(JSON.parse(msg.data), es); };
+  es.onerror = () => {
+    failures += 1;
+    if (failures >= 3) {
+      es.close();
+      onLost("Lost connection to the server. If it was restarted, try again.");
+    }
+  };
+  return es;
+}
 
 async function startJob(endpoint, payload, title) {
   renderStages();
@@ -162,9 +204,7 @@ async function startJob(endpoint, payload, title) {
     return;
   }
 
-  const es = new EventSource(`/api/jobs/${jobId}/events`);
-  es.onmessage = (msg) => {
-    const event = JSON.parse(msg.data);
+  openEventStream(jobId, (event, es) => {
     if (event.type === "stage") {
       setStage(event.stage, event.status, event.label);
     } else if (event.type === "review") {
@@ -175,22 +215,44 @@ async function startJob(endpoint, payload, title) {
       es.close();
       showResult(event.summary);
       resetButtons();
+    } else if (event.type === "cancelled") {
+      es.close();
+      showError("Generation cancelled.");
+      resetButtons();
     } else if (event.type === "error") {
       es.close();
       showError(event.error || "Generation failed");
       resetButtons();
     }
-  };
-  es.onerror = () => { /* server closes the stream on completion */ };
+  }, (message) => {
+    showError(message);
+    resetButtons();
+  });
 }
 
 function showResult(summary) {
+  summary = summary || {};
+  const link = $("#download-link");
+  const docx = typeof summary.docx === "string" ? summary.docx : "";
+  // Server sends only "<run-dir>/<file>.docx" relative to the output directory.
+  const parts = docx.split(/[\\/]/);
+  const runDir = parts.length >= 2 ? parts[parts.length - 2] : "";
   const score = summary.score != null ? `, review score ${summary.score}/100` : "";
-  $("#result-text").innerHTML =
-    `<strong>Done!</strong> Document generated${score}. ` +
-    `Fatal findings: ${summary.fatal_findings ?? 0}, warnings: ${summary.warnings ?? 0}.`;
-  $("#download-link").href =
-    `/api/history/${encodeURIComponent(summary.docx.split(/[\\\\/]/).slice(-2)[0])}/download`;
+
+  if (runDir) {
+    link.href = `/api/history/${encodeURIComponent(runDir)}/download`;
+    link.classList.remove("hidden");
+    $("#result-text").textContent =
+      `Done! Document generated${score}. ` +
+      `Fatal findings: ${summary.fatal_findings ?? 0}, warnings: ${summary.warnings ?? 0}.`;
+  } else {
+    // No document produced (or none reported) — still a completed run.
+    link.classList.add("hidden");
+    link.removeAttribute("href");
+    $("#result-text").textContent =
+      `Done! Run completed${score} but no document was produced.` +
+      ` Fatal findings: ${summary.fatal_findings ?? 0}, warnings: ${summary.warnings ?? 0}.`;
+  }
   $("#result-box").classList.remove("hidden");
 }
 
@@ -205,6 +267,13 @@ function resetButtons() {
 }
 
 // ---------- history ----------
+function badgeEl(text, kind) {
+  const span = document.createElement("span");
+  span.className = `badge ${kind}`;
+  span.textContent = text;
+  return span;
+}
+
 async function loadHistory() {
   try {
     const { runs } = await api("/api/history");
@@ -213,16 +282,42 @@ async function loadHistory() {
     $("#history-empty").hidden = runs.length > 0;
     runs.forEach((run) => {
       const tr = document.createElement("tr");
-      const badge = run.status === "demo" ? '<span class="badge ok">demo</span>'
-        : run.fatal_findings ? `<span class="badge err">${run.fatal_findings} fatal</span>`
-        : run.score != null ? `<span class="badge ok">score ${run.score}</span>`
-        : '<span class="badge warn">legacy</span>';
-      tr.innerHTML = `
-        <td>${run.name}</td>
-        <td>${run.project_name || "-"}</td>
-        <td>${(run.language || "-").toUpperCase()}</td>
-        <td>${badge}</td>
-        <td>${run.downloadable ? `<a href="/api/history/${encodeURIComponent(run.name)}/download">⬇ Download</a>` : "-"}</td>`;
+
+      // Columns must match index.html: Run|Project|Language|Score|Fatal|Download.
+      // All server-derived values are inserted via textContent — never innerHTML.
+      const cells = [
+        run.name || "-",
+        run.project_name || "-",
+        String(run.language || "-").toUpperCase(),
+      ];
+      cells.forEach((text) => {
+        const td = document.createElement("td");
+        td.textContent = text;
+        tr.appendChild(td);
+      });
+
+      const scoreTd = document.createElement("td");
+      if (run.status === "demo") scoreTd.appendChild(badgeEl("demo", "ok"));
+      else if (run.score != null) scoreTd.appendChild(badgeEl(`score ${run.score}`, "ok"));
+      else scoreTd.appendChild(badgeEl("legacy", "warn"));
+      tr.appendChild(scoreTd);
+
+      const fatalTd = document.createElement("td");
+      if (run.fatal_findings) fatalTd.appendChild(badgeEl(`${run.fatal_findings} fatal`, "err"));
+      else fatalTd.textContent = "-";
+      tr.appendChild(fatalTd);
+
+      const dlTd = document.createElement("td");
+      if (run.downloadable) {
+        const a = document.createElement("a");
+        a.href = `/api/history/${encodeURIComponent(run.name)}/download`;
+        a.textContent = "⬇ Download";
+        dlTd.appendChild(a);
+      } else {
+        dlTd.textContent = "-";
+      }
+      tr.appendChild(dlTd);
+
       tbody.appendChild(tr);
     });
   } catch (e) { toast(`Failed to load history: ${e.message}`, "err"); }

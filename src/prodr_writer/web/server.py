@@ -1,20 +1,95 @@
 """Web UI server (FastAPI): config, generation with live progress, history, download."""
 from __future__ import annotations
 
+import asyncio
 import json
+import os
+import re
+import secrets
+import sys
 import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.types import ASGIApp
 
 from ..config import AppConfig, test_connection
 from ..profiles import list_profiles
 from ..schemas import ProjectInput
+from .jobs import JobCapacityError, JobConcurrencyError, manager as _manager
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "::1"]
+_SK_RE = re.compile(r"sk-[A-Za-z0-9]{8,}")
+_WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:")
+
+
+def _bind_host() -> str:
+    """Host the UI is expected to be served on.
+
+    cli.py owns the uvicorn --host flag and cannot be changed here, so the
+    launchers (start.sh / start.bat) export PRODR_WEB_HOST to keep this module
+    in sync with what uvicorn actually binds; it defaults to loopback so the
+    zero-config localhost experience is unchanged.
+    """
+    return os.environ.get("PRODR_WEB_HOST") or os.environ.get("PRODR_HOST") or "127.0.0.1"
+
+
+def _is_loopback(host: str) -> bool:
+    return host in ("localhost", "::1") or host.startswith("127.")
+
+
+class _BearerTokenMiddleware(BaseHTTPMiddleware):
+    """Require `Authorization: Bearer <token>` on every /api/* route.
+
+    The SSE route also accepts ?token= because EventSource cannot send custom
+    headers; tokens may then appear in access logs — an accepted trade-off for
+    a single-user local tool.
+    """
+
+    def __init__(self, app: ASGIApp, token: str):
+        super().__init__(app)
+        self._token = token.encode()
+
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path.startswith("/api/"):
+            auth = request.headers.get("authorization", "")
+            supplied = auth[7:].strip() if auth.lower().startswith("bearer ") \
+                else request.query_params.get("token", "")
+            if not secrets.compare_digest(supplied.encode(), self._token):
+                return JSONResponse(
+                    {"detail": "Unauthorized — missing or invalid API token "
+                               "(set via the PRODR_WEB_TOKEN environment variable)."},
+                    status_code=401)
+        return await call_next(request)
+
+
+def _redact(message: str, api_key: Optional[str]) -> str:
+    """Strip anything secret-looking from a provider error before it reaches
+    the browser (litellm errors can embed base_url/api_key verbatim)."""
+    redacted = _SK_RE.sub("sk-***", message)
+    if api_key:
+        redacted = redacted.replace(api_key, "***")
+    return redacted
+
+
+def _classify_provider_error(message: str) -> str:
+    low = message.lower()
+    if "timed out" in low or "timeout" in low:
+        return "Connection timed out"
+    if any(s in low for s in ("401", "403", "unauthorized", "invalid api key",
+                              "incorrect api key", "authentication", "forbidden")):
+        return "Authentication failed"
+    if any(s in low for s in ("connection", "getaddrinfo", "name or service not known",
+                              "refused", "ssl", "unreachable", "network")):
+        return "Connection failed"
+    return "Request failed"
 
 
 def _docx_in(run_dir: str) -> Optional[Path]:
@@ -25,8 +100,45 @@ def _docx_in(run_dir: str) -> Optional[Path]:
     return docx[-1] if docx else None
 
 
+def _public_summary(summary: dict) -> dict:
+    """Summary safe for browsers: never leak absolute filesystem paths."""
+    public = dict(summary or {})
+    docx = public.get("docx")
+    if docx:
+        parts = Path(str(docx)).parts
+        # only <run-dir-name>/<file>.docx relative to the output directory
+        public["docx"] = "/".join(parts[-2:]) if len(parts) >= 2 else parts[-1]
+    else:
+        public.pop("docx", None)
+    return public
+
+
 def create_app() -> FastAPI:
+    host = _bind_host()
+    token = os.environ.get("PRODR_WEB_TOKEN", "").strip()
+
+    # -- Host allowlist + token policy ------------------------------------
+    if _is_loopback(host):
+        allowed_hosts = list(LOOPBACK_HOSTS)
+    elif host in ("0.0.0.0", "::"):
+        # Wildcard bind: Host-header validation cannot enumerate clients, and
+        # serving unauthenticated would expose the stored API key config.
+        if not token:
+            print(f"[ProDR_Writer] Refusing to start: binding to {host} requires "
+                  "the PRODR_WEB_TOKEN environment variable.", file=sys.stderr)
+            raise SystemExit(2)
+        allowed_hosts = ["*"]  # token auth protects every /api/* endpoint
+    else:
+        if not token:
+            print(f"[ProDR_Writer] Refusing to start: non-loopback bind ({host}) "
+                  "requires the PRODR_WEB_TOKEN environment variable.", file=sys.stderr)
+            raise SystemExit(2)
+        allowed_hosts = LOOPBACK_HOSTS + [host]
+
     app = FastAPI(title="ProDR_Writer", version="2.0")
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+    if token:
+        app.add_middleware(_BearerTokenMiddleware, token=token)
 
     # -- static ---------------------------------------------------------
     @app.get("/")
@@ -76,8 +188,13 @@ def create_app() -> FastAPI:
 
     @app.post("/api/config/test")
     def test_config():
-        ok, message = test_connection(AppConfig.load())
-        return {"ok": ok, "message": message}
+        cfg = AppConfig.load()
+        ok, message = test_connection(cfg)
+        if ok:
+            return {"ok": True, "message": message}
+        # Provider exceptions can embed the URL / api key — redact + classify.
+        detail = _redact(message, cfg.llm.api_key)
+        return {"ok": False, "message": _classify_provider_error(detail), "detail": detail}
 
     @app.get("/api/meta")
     def meta():
@@ -97,6 +214,15 @@ def create_app() -> FastAPI:
         language: str = "en"
         profile: str = "generic-enterprise"
 
+    def _create_job(kind: str, project_name: str) -> dict:
+        try:
+            job = _manager.create(kind, project_name)
+        except JobConcurrencyError as exc:
+            raise HTTPException(status_code=429, detail=str(exc))
+        except JobCapacityError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+        return job
+
     @app.post("/api/generate")
     def generate(payload: GeneratePayload):
         from ..pipeline import Pipeline
@@ -107,7 +233,7 @@ def create_app() -> FastAPI:
                 "LLM configuration is incomplete — set base_url / api_key / model "
                 "on the Configuration tab first."))
         inputs = ProjectInput(**payload.model_dump())
-        job = _manager.create("generate", inputs.project_name)
+        job = _create_job("generate", inputs.project_name)
         _manager.start(job, lambda j: Pipeline(cfg, notify=j.emit).run(inputs)[1])
         return {"job_id": job.id}
 
@@ -118,33 +244,45 @@ def create_app() -> FastAPI:
         cfg = AppConfig.load({"language": (payload or {}).get("language") or "en",
                               "profile": (payload or {}).get("profile") or "generic-enterprise"})
         cfg.output_dir = cfg.output_dir or "outputs"
-        job = _manager.create("demo", "Demo proposal")
+        job = _create_job("demo", "Demo proposal")
         _manager.start(job, lambda j: run_demo(cfg, notify=j.emit)[1])
         return {"job_id": job.id}
 
     # -- jobs / progress / history --------------------------------------------
     @app.get("/api/jobs/{job_id}/events")
-    def events(job_id: str):
+    async def events(job_id: str, request: Request):
         job = _manager.get(job_id)
         if not job:
-            raise HTTPException(status_code=404, detail="Unknown job")
+            status_code = 410 if _manager.was_evicted(job_id) else 404
+            raise HTTPException(status_code=status_code, detail="Unknown or expired job")
 
-        def stream():
-            index = 0
-            start = time.time()
-            while True:
-                got = job.wait_event(index, timeout=5.0)
-                if got:
-                    index, event = got
-                    yield f"data: {json.dumps(event)}\n\n"
-                    if event["type"] in ("done", "error"):
+        async def stream():
+            waiter = job.attach_async()  # worker threads wake us without blocking a thread
+            pos = 0
+            started = time.monotonic()
+            try:
+                while True:
+                    if await request.is_disconnected():
                         return
-                elif job.status != "running" and index >= len(job.events):
-                    yield f'data: {{"type": "{job.status}", "summary": {json.dumps(job.summary)}, "error": {json.dumps(job.error)}}}\n\n'
-                    return
-                elif time.time() - start > 1800:  # hard cap a stalled stream at 30 min
-                    yield 'data: {"type": "error", "error": "timeout"}\n\n'
-                    return
+                    if pos >= job.total_events:
+                        try:
+                            await asyncio.wait_for(waiter.wait(), timeout=5.0)
+                        except asyncio.TimeoutError:
+                            pass
+                        waiter.clear()
+                    pos, fresh = job.events_since(pos)
+                    for event in fresh:
+                        yield f"data: {json.dumps(event)}\n\n"
+                        if event["type"] in ("done", "error", "cancelled"):
+                            return
+                    if job.status in _manager.TERMINAL_STATUSES and pos >= job.total_events:
+                        yield f"data: {json.dumps({'type': job.status, 'summary': _public_summary(job.summary), 'error': job.error})}\n\n"
+                        return
+                    if time.monotonic() - started > 1800:  # cap stalled streams at 30 min
+                        yield 'data: {"type": "error", "error": "timeout"}\n\n'
+                        return
+            finally:
+                job.detach_async()
 
         return StreamingResponse(stream(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -153,21 +291,47 @@ def create_app() -> FastAPI:
     def job_status(job_id: str):
         job = _manager.get(job_id)
         if not job:
-            raise HTTPException(status_code=404, detail="Unknown job")
+            status_code = 410 if _manager.was_evicted(job_id) else 404
+            raise HTTPException(status_code=status_code, detail="Unknown or expired job")
         return {"id": job.id, "status": job.status, "kind": job.kind,
-                "project_name": job.project_name, "error": job.error, "summary": job.summary}
+                "project_name": job.project_name, "error": job.error,
+                "cancel_requested": job.cancel_requested,
+                "summary": _public_summary(job.summary)}
+
+    @app.post("/api/jobs/{job_id}/cancel")
+    def cancel_job(job_id: str):
+        """Best-effort cancel: stops queued jobs outright; for running jobs the
+        pipeline has no hook we may call, so the current stage finishes first."""
+        job = _manager.get(job_id)
+        if not job:
+            status_code = 410 if _manager.was_evicted(job_id) else 404
+            raise HTTPException(status_code=status_code, detail="Unknown or expired job")
+        cancelled = job.request_cancel()
+        return {"id": job.id, "status": job.status,
+                "cancel_requested": job.cancel_requested,
+                "detail": "Job cancelled." if cancelled else
+                          "Cancellation requested — the in-flight pipeline stage will finish first."}
 
     @app.get("/api/history")
     def history(limit: int = 30):
+        limit = max(1, min(limit, 200))  # clamp: negative limit truncated the wrong end
         cfg = AppConfig.load()
         out_dir = Path(cfg.output_dir)
         runs = []
         if out_dir.is_dir():
-            for run_dir in sorted(out_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)[:limit]:
-                if not run_dir.is_dir():
-                    continue
+            entries = []
+            for run_dir in out_dir.iterdir():
+                try:
+                    mtime = run_dir.stat().st_mtime
+                    if not run_dir.is_dir():
+                        continue
+                except OSError:
+                    continue  # entry vanished mid-listing
+                entries.append((mtime, run_dir))
+            entries.sort(key=lambda item: item[0], reverse=True)
+            for _, run_dir in entries[:limit]:
                 run_json = run_dir / "run.json"
-                entry = {"name": run_dir.name, "path": str(run_dir), "status": "unknown"}
+                entry = {"name": run_dir.name, "path": "", "status": "unknown"}
                 if run_json.exists():
                     try:
                         data = json.loads(run_json.read_text(encoding="utf-8"))
@@ -188,16 +352,20 @@ def create_app() -> FastAPI:
 
     @app.get("/api/history/{name}/download")
     def download(name: str):
-        if "/" in name or "\\" in name or ".." in name:
+        # Reject separators, traversal and Windows drive-relative names up front;
+        # resolved containment below is the primary guard.
+        if ("/" in name or "\\" in name or ".." in name or ":" in name
+                or _WINDOWS_DRIVE_RE.match(name)):
             raise HTTPException(status_code=400, detail="Invalid run name")
         cfg = AppConfig.load()
-        docx = _docx_in(str(Path(cfg.output_dir) / name))
+        out_dir = Path(cfg.output_dir or "outputs").resolve()
+        target = (out_dir / name).resolve()
+        if not target.is_relative_to(out_dir):  # e.g. Path("outputs")/"C:" -> "C:"
+            raise HTTPException(status_code=400, detail="Invalid run name")
+        docx = _docx_in(str(target))
         if not docx:
             raise HTTPException(status_code=404, detail="No document in this run directory")
         return FileResponse(docx, filename=docx.name,
                             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
     return app
-
-
-from .jobs import manager as _manager  # noqa: E402  (single shared instance)

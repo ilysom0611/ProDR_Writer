@@ -15,25 +15,34 @@ Built for international bidding: English-first output (Chinese optional), Wester
 
 ## Installation
 
-### One-click (recommended)
+### One command, from nothing (recommended)
+
+Downloads the source, creates a virtualenv, and installs — one command per OS:
 
 Linux / macOS:
 
 ```bash
-./install.sh   # create .venv and install
-./start.sh     # web UI at http://127.0.0.1:8000 (PRODR_HOST/PRODR_PORT to override)
-./stop.sh      # stop the background server
-./update.sh    # git pull + reinstall (+ restart if it was running)
+curl -fsSL https://raw.githubusercontent.com/ilysom0611/ProDR_Writer/main/install.sh | bash
 ```
 
-Windows (double-click or run in cmd):
+Windows (PowerShell or cmd):
 
 ```bat
-install.bat
-start.bat      % web UI at http://127.0.0.1:8000 (PRODR_HOST/PRODR_PORT to override)
-stop.bat
-update.bat
+curl -fsSL https://raw.githubusercontent.com/ilysom0611/ProDR_Writer/main/install.bat -o install.bat && install.bat
 ```
+
+The source lands in `./ProDR_Writer` (override with `PRODR_DEST=... bash install.sh`); everything else happens inside it.
+
+### Inside an existing checkout
+
+Four commands manage the whole lifecycle:
+
+| Action | Linux / macOS | Windows |
+|--------|---------------|---------|
+| Install / reinstall | `./install.sh` | `install.bat` |
+| Start (web UI on this host's LAN address) | `./start.sh` | `start.bat` |
+| Stop | `./stop.sh` | `stop.bat` |
+| Update (`git pull` + reinstall + restart) | `./update.sh` | `update.bat` |
 
 ### Manual
 
@@ -44,16 +53,23 @@ prodr-writer --help       # or: python main.py
 
 ## Web UI
 
-`prodr-writer web --host 127.0.0.1 --port 8000` (or `start.sh` / `start.bat`) opens a browser UI with three tabs:
+`start.sh` / `start.bat` (or `prodr-writer web`) opens a browser UI with three tabs:
 
 - **Generate** — fill in project parameters, watch each pipeline stage complete live, then download the finished `.docx`. A **Try demo** button builds a full sample document with no API key.
 - **Configuration** — set base URL / API key / model for any OpenAI-compatible endpoint, pick default language and profile, and test the connection without leaving the page.
 - **History** — every past run with review score, validation findings, and one-click download.
 
-> **Security note:** the Web UI has no built-in authentication and can read/modify the stored
-> LLM configuration (including triggering generation that spends your API key). It therefore
-> binds to `127.0.0.1` by default. To expose it on your LAN — e.g. behind a reverse proxy with
-> its own auth — set `PRODR_HOST=0.0.0.0 ./start.sh` (or `prodr-writer web --host 0.0.0.0`).
+By default the server binds to all interfaces and prints both URLs:
+
+```
+✔ Started (PID 12345)
+  Local:   http://127.0.0.1:8000
+  Network: http://192.168.1.10:8000   (access token: xK9…)
+```
+
+The LAN URL includes an auto-generated access token (persisted in `.web-token`, reused across restarts); opening it drops you straight in. Set `PRODR_WEB_TOKEN` yourself to control the token, or `PRODR_HOST=127.0.0.1 ./start.sh` for loopback-only access with no token.
+
+> **Security note:** the Web UI can read/modify the stored LLM configuration and trigger generation that spends your API key. Any non-loopback bind therefore requires a bearer token (`PRODR_WEB_TOKEN`) on every `/api/*` route, and Host-header validation rejects DNS-rebinding origins. For exposure beyond a trusted LAN, put a reverse proxy with TLS + its own auth in front.
 
 ## Quick start
 
